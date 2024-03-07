@@ -181,7 +181,7 @@ void print_inst_memoperand(Instruction inst, StringBuilder* sb) {
     }
 
     if (inst.displacement.int64) {
-        sb_append_format(sb, " + %lld", inst.displacement.int64); // TODO: displacement size?
+        sb_append_format(sb, " + 0x%x", inst.displacement.int64); // TODO: displacement size?
     }
     sb_append_format(sb, "]");
 }
@@ -191,7 +191,7 @@ char* print_inst(Instruction inst, StringBuilder* sb) {
     switch (inst.encoding) {
         case IE_NoOperands: break;
         case IE_Imm: {
-            sb_append_format(sb, "%lld", inst.immediate.int64);
+            sb_append_format(sb, "0x%x", inst.immediate.int64);
         } break;
         case IE_RegReg: {
             sb_append_format(sb, "%s, ", get_register_name(inst.reg, inst.operand_bytesize));
@@ -207,11 +207,11 @@ char* print_inst(Instruction inst, StringBuilder* sb) {
         } break;
         case IE_RegImm: {
             sb_append_format(sb, "%s", get_register_name(inst.reg, inst.operand_bytesize));
-            sb_append_format(sb, ", %lld", inst.immediate.int64);
+            sb_append_format(sb, ", 0x%x", inst.immediate.int64);
         } break;
         case IE_MemImm: {
             print_inst_memoperand(inst, sb);
-            sb_append_format(sb, ", %lld", inst.immediate.int64);
+            sb_append_format(sb, ", 0x%x", inst.immediate.int64);
         } break;
     }
     return sb->content;
@@ -507,7 +507,10 @@ static void run_tests() {
         Disassembler dasm = {test.machine_code, 0};
         Instruction inst = disassemb(&dasm);
         char* disasm = print_inst(inst, temp_builder());
-        printf("%3d %-50s %s\n", i, test.disassembly, disasm);
+
+        u32 lev = lev_dist(make_string(test.disassembly), make_string(disasm));
+
+        printf("%3d %-50s %-50s (lev: %u)\n", i, test.disassembly, disasm, lev);
     }
 }
 
