@@ -25,6 +25,10 @@ typedef char bool;
 #define false 0
 #define null 0
 
+// TODO: maybe extract string library to seperate repo, and make it single-header
+#include "../plang/src/essh-string.h"
+#include "../plang/src/essh-string.c"
+
 #define kB (1024)
 #define MB (kB*kB)
 #define GB (MB*kB)
@@ -158,7 +162,7 @@ char* get_register_name(RegisterIndex reg, u32 byte_size) {
 }
 
 
-void print_inst_memoperand(Instruction inst) {
+void print_inst_memoperand(Instruction inst, StringBuilder* sb) {
     static const char* ptr[] = {null, "byte", "word", null, "dword", null, null, null, "qword"};
 
     // ptr [mem]
@@ -168,49 +172,49 @@ void print_inst_memoperand(Instruction inst) {
     // ptr [mem + index*scale]
     // ptr [mem + index*scale + disp]
 
-    printf("%s ptr [", ptr[inst.operand_bytesize]);
+    sb_append_format(sb, "%s ptr [", ptr[inst.operand_bytesize]);
 
-    printf("%s", get_register_name(inst.mem, inst.address_bytesize)); // TODO: this must be put under some kind of condition
+    sb_append_format(sb, "%s", get_register_name(inst.mem, inst.address_bytesize)); // TODO: this must be put under some kind of condition
 
     if (inst.scale) {
-        printf(" + %s*%d", get_register_name(inst.index, inst.address_bytesize), (int)inst.scale);
+        sb_append_format(sb, " + %s*%d", get_register_name(inst.index, inst.address_bytesize), (int)inst.scale);
     }
 
     if (inst.displacement.int64) {
-        printf(" + %lld", inst.displacement.int64); // TODO: displacement size?
+        sb_append_format(sb, " + %lld", inst.displacement.int64); // TODO: displacement size?
     }
-    printf("]");
+    sb_append_format(sb, "]");
 }
 
-void print_inst(Instruction inst) {
-    printf("%s ", inst.mnemonic);
+char* print_inst(Instruction inst, StringBuilder* sb) {
+    sb_append_format(sb, "%s ", inst.mnemonic);
     switch (inst.encoding) {
         case IE_NoOperands: break;
         case IE_Imm: {
-            printf("%lld", inst.immediate.int64);
+            sb_append_format(sb, "%lld", inst.immediate.int64);
         } break;
         case IE_RegReg: {
-            printf("%s, ", get_register_name(inst.reg, inst.operand_bytesize));
-            printf("%s",   get_register_name(inst.mem, inst.operand_bytesize));
+            sb_append_format(sb, "%s, ", get_register_name(inst.reg, inst.operand_bytesize));
+            sb_append_format(sb, "%s",   get_register_name(inst.mem, inst.operand_bytesize));
         } break;
         case IE_RegMem: {
-            printf("%s, ", get_register_name(inst.reg, inst.operand_bytesize));
-            print_inst_memoperand(inst);
+            sb_append_format(sb, "%s, ", get_register_name(inst.reg, inst.operand_bytesize));
+            print_inst_memoperand(inst, sb);
         } break;
         case IE_MemReg: {
-            print_inst_memoperand(inst);
-            printf(", %s", get_register_name(inst.reg, inst.operand_bytesize));
+            print_inst_memoperand(inst, sb);
+            sb_append_format(sb, ", %s", get_register_name(inst.reg, inst.operand_bytesize));
         } break;
         case IE_RegImm: {
-            printf("%s", get_register_name(inst.reg, inst.operand_bytesize));
-            printf(", %lld", inst.immediate.int64);
+            sb_append_format(sb, "%s", get_register_name(inst.reg, inst.operand_bytesize));
+            sb_append_format(sb, ", %lld", inst.immediate.int64);
         } break;
         case IE_MemImm: {
-            print_inst_memoperand(inst);
-            printf(", %lld", inst.immediate.int64);
+            print_inst_memoperand(inst, sb);
+            sb_append_format(sb, ", %lld", inst.immediate.int64);
         } break;
     }
-    printf("\n");
+    return sb->content;
 }
 
 typedef struct Disassembler {
@@ -344,7 +348,7 @@ void opcodemap_lookup(Disassembler* dasm, Instruction* inst) {
 
     u8 byte = get_byte(dasm);
     // TODO: fix possible overflow here:
-    u8 opcode_ex = (dasm->buffer[dasm->index + 1] & 0b00111000) >> 3; // this opcode extension might be applicable in some cases
+    u8 opcode_ex = (dasm->buffer[dasm->index] & 0b00111000) >> 3; // this opcode extension might be applicable in some cases
 
     switch (byte) { // Opcode Map (see: Volume 2 Appendix A.3)
         //          0x00     0x01     0x02     0x03     0x04     0x05     0x06     0x07     0x08     0x09     0x0A     0x0B     0x0C     0x0D     0x0E     0x0F
@@ -502,8 +506,8 @@ static void run_tests() {
         Testcase test = tests[i];
         Disassembler dasm = {test.machine_code, 0};
         Instruction inst = disassemb(&dasm);
-        printf("%3d %-50s", i, test.disassembly);
-        print_inst(inst);
+        char* disasm = print_inst(inst, temp_builder());
+        printf("%3d %-50s %s\n", i, test.disassembly, disasm);
     }
 }
 
@@ -541,24 +545,6 @@ mov dword ptr [rax + rbx + 1], 16
 mov dword ptr [rax + rbx*2 + 1], 16
 
 */
-
-    u8* buffer = alloc_exec_buffer();
-
-    // char prog[] = "\xB8\x55\xA4\x00\x00\xC3";
-    char prog[] = "\x03\x07\x67\x48\x01\x38";
-
-
-    memcpy(buffer, prog, sizeof(prog));
-    // func* f = (func*)buffer;
-    // int i = f();
-    // printf("Returned: %d\n", i);
-
-    Disassembler dasm = {buffer, 0};
-    for (u32 i = 0; i < 5; i++) {
-        Instruction inst = disassemb(&dasm);
-        print_inst(inst);
-    }
-
 
     run_tests();
 
