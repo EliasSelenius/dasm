@@ -25,10 +25,12 @@ typedef char bool;
 #define false 0
 #define null 0
 
-#define MB (1024*1024)
-#define GB (MB*1024)
+#define kB (1024)
+#define MB (kB*kB)
+#define GB (MB*kB)
+#define TB (GB*kB)
 
-#define page_size (1024*4)
+#define page_size (4*kB)
 
 u8* alloc_exec_buffer() {
     u8* buffer = VirtualAlloc(null, 1*GB, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
@@ -37,7 +39,7 @@ u8* alloc_exec_buffer() {
 
 typedef int func();
 
-#define not_immplemented(msg) do { printf("[ERROR]: Not immplemented \""msg"\" at %s:%d\n", __FILE__, __LINE__); exit(1); } while(0)
+#define not_immplemented(msg) do { printf("[ERROR]: Not immplemented \""msg"\" at %s:%d\n", __FILE__, __LINE__); /*exit(1);*/ } while(0)
 
 /*
 
@@ -270,26 +272,23 @@ prefix and opcode information:
 
 */
 
-typedef struct OpCodeInfo {
-    char* mnemonic;
-    InstructionEncoding encoding;
-    u8 operand_bytesize;
-    u8 imm_operand_bytesize;
-} OpCodeInfo;
 
-void opcodemap_lookup(u8 byte, Instruction* inst) {
+static int opcode_visits[0x100] = {0};
 
-    #define entry(num, code) case (num): code break;
+void opcodemap_lookup(Disassembler* dasm, Instruction* inst) {
+
+    #define entry(num, code) case (num): opcode_visits[num]++; code break;
     #define row(sn, aa, ab, ac, ad, ba, bb, bc, bd, ca, cb, cc, cd, da, db, dc, dd)\
         entry(sn+0x00, aa) entry(sn+0x01, ab) entry(sn+0x02, ac) entry(sn+0x03, ad)\
         entry(sn+0x04, ba) entry(sn+0x05, bb) entry(sn+0x06, bc) entry(sn+0x07, bd)\
         entry(sn+0x08, ca) entry(sn+0x09, cb) entry(sn+0x0A, cc) entry(sn+0x0B, cd)\
         entry(sn+0x0C, da) entry(sn+0x0D, db) entry(sn+0x0E, dc) entry(sn+0x0F, dd)
 
-    #define empty { not_immplemented(); }
+    #define empty { inst->mnemonic = "<not_immplemented>"; inst->encoding = IE_NoOperands; }
+    #define invalid { inst->mnemonic = "<invalid>"; inst->encoding = IE_NoOperands; }
 
     // operand encoding is specified by the three least significant bits
-    #define last_three_bits(operation_mnemonic) {\
+    #define lt(operation_mnemonic) {\
         inst->mnemonic = #operation_mnemonic;\
         switch (byte & 0b111) {\
             case 0b000: inst->encoding = IE_MemReg;\
@@ -309,25 +308,9 @@ void opcodemap_lookup(u8 byte, Instruction* inst) {
         }\
     }
 
-    #define add_3 last_three_bits(add)
-    #define adc_3 last_three_bits(adc)
-    #define and_3 last_three_bits(and)
-    #define xor_3 last_three_bits(xor)
-    #define or_3  last_three_bits(or)
-    #define sbb_3 last_three_bits(sbb)
-    #define sub_3 last_three_bits(sub)
-    #define cmp_3 last_three_bits(cmp)
-    #define mov_3 last_three_bits(mov)
-
+    // legacy prefixes
     #define op_size { inst->operand_bytesize = 2; }
     #define ad_size { inst->address_bytesize = 4; }
-
-
-    // REX prefix format:  0100WRXB
-    // REX.W: set operand size to 64bits
-    // REX.R: extension of ModRM.reg field, (becomes the fourth bit)
-    // REX.X: extension of SIB.index field, (becomes the fourth bit)
-    // REX.B: extension of ModRM.r/m, SIB.base or opcode.reg field, (becomes the fourth bit)
 
     #define REX {\
         if (byte & 0b1000) inst->operand_bytesize = 8;\
@@ -336,21 +319,48 @@ void opcodemap_lookup(u8 byte, Instruction* inst) {
         inst->mem   |= (byte & 0b0001) << 3;\
     }
 
+    // immediate group 1
+    #define group1 switch (opcode_ex) {\
+        case 0b000: inst->mnemonic = "add"; inst->encoding = IE_MemImm; break;\
+        case 0b001: inst->mnemonic = "or";  inst->encoding = IE_MemImm; break;\
+        case 0b010: inst->mnemonic = "adc"; inst->encoding = IE_MemImm; break;\
+        case 0b011: inst->mnemonic = "sbb"; inst->encoding = IE_MemImm; break;\
+        case 0b100: inst->mnemonic = "and"; inst->encoding = IE_MemImm; break;\
+        case 0b101: inst->mnemonic = "sub"; inst->encoding = IE_MemImm; break;\
+        case 0b110: inst->mnemonic = "xor"; inst->encoding = IE_MemImm; break;\
+        case 0b111: inst->mnemonic = "cmp"; inst->encoding = IE_MemImm; break;\
+    }
+
+    #define group11 switch (opcode_ex) {\
+        case 0b000: inst->mnemonic = "mov"; inst->encoding = IE_MemImm; break;\
+        case 0b001: break;\
+        case 0b010: break;\
+        case 0b011: break;\
+        case 0b100: break;\
+        case 0b101: break;\
+        case 0b110: break;\
+        case 0b111: break;\
+    }
+
+    u8 byte = get_byte(dasm);
+    // TODO: fix possible overflow here:
+    u8 opcode_ex = (dasm->buffer[dasm->index + 1] & 0b00111000) >> 3; // this opcode extension might be applicable in some cases
+
     switch (byte) { // Opcode Map (see: Volume 2 Appendix A.3)
         //          0x00     0x01     0x02     0x03     0x04     0x05     0x06     0x07     0x08     0x09     0x0A     0x0B     0x0C     0x0D     0x0E     0x0F
-        row(0x00,   add_3,   add_3,   add_3,   add_3,   add_3,   add_3,   empty,   empty,    or_3,    or_3,    or_3,    or_3,    or_3,    or_3,   empty,   empty)
-        row(0x10,   adc_3,   adc_3,   adc_3,   adc_3,   adc_3,   adc_3,   empty,   empty,   sbb_3,   sbb_3,   sbb_3,   sbb_3,   sbb_3,   sbb_3,   empty,   empty)
-        row(0x20,   and_3,   and_3,   and_3,   and_3,   and_3,   and_3,   empty,   empty,   sub_3,   sub_3,   sub_3,   sub_3,   sub_3,   sub_3,   empty,   empty)
-        row(0x30,   xor_3,   xor_3,   xor_3,   xor_3,   xor_3,   xor_3,   empty,   empty,   cmp_3,   cmp_3,   cmp_3,   cmp_3,   cmp_3,   cmp_3,   empty,   empty)
+        row(0x00, lt(add), lt(add), lt(add), lt(add), lt(add), lt(add),   empty,   empty, lt (or), lt (or), lt (or), lt (or), lt (or), lt (or),   empty,   empty)
+        row(0x10, lt(adc), lt(adc), lt(adc), lt(adc), lt(adc), lt(adc),   empty,   empty, lt(sbb), lt(sbb), lt(sbb), lt(sbb), lt(sbb), lt(sbb),   empty,   empty)
+        row(0x20, lt(and), lt(and), lt(and), lt(and), lt(and), lt(and),   empty,   empty, lt(sub), lt(sub), lt(sub), lt(sub), lt(sub), lt(sub),   empty,   empty)
+        row(0x30, lt(xor), lt(xor), lt(xor), lt(xor), lt(xor), lt(xor),   empty,   empty, lt(cmp), lt(cmp), lt(cmp), lt(cmp), lt(cmp), lt(cmp),   empty,   empty)
         row(0x40,     REX,     REX,     REX,     REX,     REX,     REX,     REX,     REX,     REX,     REX,     REX,     REX,     REX,     REX,     REX,     REX)
         row(0x50,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty)
         row(0x60,   empty,   empty,   empty,   empty,   empty,   empty, op_size, ad_size,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty)
         row(0x70,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty)
-        row(0x80,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   mov_3,   mov_3,   mov_3,   mov_3,   empty,   empty,   empty,   empty)
+        row(0x80,  group1,  group1,  group1,  group1,   empty,   empty,   empty,   empty, lt(mov), lt(mov), lt(mov), lt(mov),   empty,   empty,   empty,   empty)
         row(0x90,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty)
         row(0xA0,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty)
         row(0xB0,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty)
-        row(0xC0,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty)
+        row(0xC0,   empty,   empty,   empty,   empty,   empty,   empty, group11, group11,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty)
         row(0xD0,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty)
         row(0xE0,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty)
         row(0xF0,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty)
@@ -455,8 +465,7 @@ Instruction disassemb(Disassembler* dasm) {
     inst.address_bytesize = 8;
 
     do {
-        u8 byte = get_byte(dasm);
-        opcodemap_lookup(byte, &inst);
+        opcodemap_lookup(dasm, &inst);
     } while (inst.mnemonic == null);
 
     switch (inst.encoding) {
@@ -466,16 +475,39 @@ Instruction disassemb(Disassembler* dasm) {
         case IE_RegMem:     modrm_sib_disp(dasm, &inst); break;
         case IE_MemReg:     modrm_sib_disp(dasm, &inst); break;
         case IE_RegImm:     inst.immediate.uint64 = get_bytes(dasm, inst.operand_bytesize); break;
-        case IE_MemImm:     inst.immediate.uint64 = get_bytes(dasm, inst.operand_bytesize); break;
+        case IE_MemImm:     modrm_sib_disp(dasm, &inst); inst.immediate.uint64 = get_bytes(dasm, inst.operand_bytesize); break;
     }
 
     return inst;
 }
 
+typedef struct Testcase {
+    u8* machine_code;
+    char* disassembly;
+} Testcase;
+
+static const Testcase tests[] = {
+    {(u8*)"\x03\x07"                        , "add eax, dword ptr [rdi]"},
+    {(u8*)"\x67\x48\x01\x38"                , "add qword ptr [eax], rdi"},
+    {(u8*)"\xc7\x00\x10\x00\x00\x00"        , "mov dword ptr [rax], 0x10"},
+    {(u8*)"\xc7\x40\x01\x10\x00\x00\x00"    , "mov dword ptr [rax + 0x1], 0x10"},
+    {(u8*)"\xc7\x04\x18\x10\x00\x00\x00"    , "mov dword ptr [rax + rbx*1], 0x10"},
+    {(u8*)"\xc7\x44\x18\x01\x10\x00\x00\x00", "mov dword ptr [rax + rbx*1 + 0x1], 0x10"},
+    {(u8*)"\xc7\x44\x58\x01\x10\x00\x00\x00", "mov dword ptr [rax + rbx*2 + 0x1], 0x10"},
+};
+
+static void run_tests() {
+    printf("Running Tests:\n");
+    for (int i = 0; i < (sizeof(tests)/sizeof(tests[0])); i++) {
+        Testcase test = tests[i];
+        Disassembler dasm = {test.machine_code, 0};
+        Instruction inst = disassemb(&dasm);
+        printf("%3d %-50s", i, test.disassembly);
+        print_inst(inst);
+    }
+}
 
 int main(int argc, char* argv[]) {
-    u8* buffer = alloc_exec_buffer();
-
 /*
 81 c0 ff 00 00 00
 80 c0 ff
@@ -510,6 +542,8 @@ mov dword ptr [rax + rbx*2 + 1], 16
 
 */
 
+    u8* buffer = alloc_exec_buffer();
+
     // char prog[] = "\xB8\x55\xA4\x00\x00\xC3";
     char prog[] = "\x03\x07\x67\x48\x01\x38";
 
@@ -523,6 +557,22 @@ mov dword ptr [rax + rbx*2 + 1], 16
     for (u32 i = 0; i < 5; i++) {
         Instruction inst = disassemb(&dasm);
         print_inst(inst);
+    }
+
+
+    run_tests();
+
+    printf("OpCode Map usage:\n  ");
+    for (int i = 0; i <= 0xF; i++) printf(" %02x", i);
+    printf("\n");
+    for (int i = 0; i <= 0xF; i++) {
+        printf("%x0:", i);
+        for (int j = 0; j <= 0xF; j++) {
+            int visits = opcode_visits[i*0x10 + j];
+            if (visits) printf("%2d|", visits);
+            else        printf("..|");
+        }
+        printf("\n");
     }
 
     return 0;
