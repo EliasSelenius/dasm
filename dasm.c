@@ -174,7 +174,8 @@ void print_inst_memoperand(Instruction inst, StringBuilder* sb) {
 
     sb_append_format(sb, "%s ptr [", ptr[inst.operand_bytesize]);
 
-    sb_append_format(sb, "%s", get_register_name(inst.mem, inst.address_bytesize)); // TODO: this must be put under some kind of condition
+    // TODO: this must be put under some kind of condition (when using displacement only or rip relative addressing)
+    sb_append_format(sb, "%s", get_register_name(inst.mem, inst.address_bytesize));
 
     if (inst.scale) {
         sb_append_format(sb, " + %s*%d", get_register_name(inst.index, inst.address_bytesize), (int)inst.scale);
@@ -421,6 +422,11 @@ void modrm_sib_disp(Disassembler* dasm, Instruction* inst) {
     inst->mem |= (RegisterIndex)RM;
 
     if (MOD == 0b11) { // rm is a register not an address
+        if (inst->encoding == IE_MemReg) {
+            RegisterIndex temp = inst->mem;
+            inst->mem = inst->reg;
+            inst->reg = temp;
+        }
         inst->encoding = IE_RegReg;
         return;
     }
