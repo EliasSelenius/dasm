@@ -491,27 +491,103 @@ typedef struct Testcase {
 } Testcase;
 
 static const Testcase tests[] = {
-    {(u8*)"\x03\x07"                        , "add eax, dword ptr [rdi]"},
-    {(u8*)"\x67\x48\x01\x38"                , "add qword ptr [eax], rdi"},
-    {(u8*)"\xc7\x00\x10\x00\x00\x00"        , "mov dword ptr [rax], 0x10"},
-    {(u8*)"\xc7\x40\x01\x10\x00\x00\x00"    , "mov dword ptr [rax + 0x1], 0x10"},
-    {(u8*)"\xc7\x04\x18\x10\x00\x00\x00"    , "mov dword ptr [rax + rbx*1], 0x10"},
+    {(u8*)"\x03\x07",                         "add eax, dword ptr [rdi]"},
+    {(u8*)"\x67\x48\x01\x38",                 "add qword ptr [eax], rdi"},
+    {(u8*)"\xc7\x00\x10\x00\x00\x00",         "mov dword ptr [rax], 0x10"},
+    {(u8*)"\xc7\x40\x01\x10\x00\x00\x00",     "mov dword ptr [rax + 0x1], 0x10"},
+    {(u8*)"\xc7\x04\x18\x10\x00\x00\x00",     "mov dword ptr [rax + rbx*1], 0x10"},
     {(u8*)"\xc7\x44\x18\x01\x10\x00\x00\x00", "mov dword ptr [rax + rbx*1 + 0x1], 0x10"},
     {(u8*)"\xc7\x44\x58\x01\x10\x00\x00\x00", "mov dword ptr [rax + rbx*2 + 0x1], 0x10"},
+    {(u8*)"\x00\xd8",                         "add al, bl"},
+    {(u8*)"\x48\x01\xe0",                     "add rax, rsp"},
+    {(u8*)"\x01\xe0",                         "add eax, esp"},
+    {(u8*)"\x02\x00",                         "add al, byte ptr [rax]"},
+    {(u8*)"\x03\x00",                         "add eax, dword ptr [rax]"},
+    {(u8*)"\x04\x10",                         "add al, 0x10"},
+    {(u8*)"\x66\x05\x00\x10",                 "add ax, 0x1000"},
+    {(u8*)"\x05\x00\x10\x00\x00",             "add eax, 0x1000"},
+    {(u8*)"\x10\xd8",                         "adc al, bl"},
+    {(u8*)"\x48\x11\xe0",                     "adc rax, rsp"},
+    {(u8*)"\x11\xe0",                         "adc eax, esp"},
+    {(u8*)"\x12\x00",                         "adc al, byte ptr [rax]"},
+    {(u8*)"\x13\x00",                         "adc eax, dword ptr [rax]"},
+    {(u8*)"\x14\x10",                         "adc al, 0x10"},
+    {(u8*)"\x66\x15\x00\x10",                 "adc ax, 0x1000"},
+    {(u8*)"\x15\x00\x10\x00\x00",             "adc eax, 0x1000"},
+    {(u8*)"\x20\xd8",                         "and al, bl"},
+    {(u8*)"\x48\x21\xe0",                     "and rax, rsp"},
+    {(u8*)"\x21\xe0",                         "and eax, esp"},
+    {(u8*)"\x22\x00",                         "and al, byte ptr [rax]"},
+    {(u8*)"\x23\x00",                         "and eax, dword ptr [rax]"},
+    {(u8*)"\x24\x10",                         "and al, 0x10"},
+    {(u8*)"\x66\x25\x00\x10",                 "and ax, 0x1000"},
+    {(u8*)"\x25\x00\x10\x00\x00",             "and eax, 0x1000"},
+    {(u8*)"\x30\xd8",                         "xor al, bl"},
+    {(u8*)"\x48\x31\xe0",                     "xor rax, rsp"},
+    {(u8*)"\x31\xe0",                         "xor eax, esp"},
+    {(u8*)"\x32\x00",                         "xor al, byte ptr [rax]"},
+    {(u8*)"\x33\x00",                         "xor eax, dword ptr [rax]"},
+    {(u8*)"\x34\x10",                         "xor al, 0x10"},
+    {(u8*)"\x66\x35\x00\x10",                 "xor ax, 0x1000"},
+    {(u8*)"\x35\x00\x10\x00\x00",             "xor eax, 0x1000"},
+    {(u8*)"\x08\xd8",                         "or al, bl"},
+    {(u8*)"\x48\x09\xe0",                     "or rax, rsp"},
+    {(u8*)"\x09\xe0",                         "or eax, esp"},
+    {(u8*)"\x0a\x00",                         "or al, byte ptr [rax]"},
+    {(u8*)"\x0b\x00",                         "or eax, dword ptr [rax]"},
+    {(u8*)"\x0c\x10",                         "or al, 0x10"},
+    {(u8*)"\x66\x0d\x00\x10",                 "or ax, 0x1000"},
+    {(u8*)"\x0d\x00\x10\x00\x00",             "or eax, 0x1000"},
+    {(u8*)"\x18\xd8",                         "sbb al, bl"},
+    {(u8*)"\x48\x19\xe0",                     "sbb rax, rsp"},
+    {(u8*)"\x19\xe0",                         "sbb eax, esp"},
+    {(u8*)"\x1a\x00",                         "sbb al, byte ptr [rax]"},
+    {(u8*)"\x1b\x00",                         "sbb eax, dword ptr [rax]"},
+    {(u8*)"\x1c\x10",                         "sbb al, 0x10"},
+    {(u8*)"\x66\x1d\x00\x10",                 "sbb ax, 0x1000"},
+    {(u8*)"\x1d\x00\x10\x00\x00",             "sbb eax, 0x1000"},
+    {(u8*)"\x28\xd8",                         "sub al, bl"},
+    {(u8*)"\x48\x29\xe0",                     "sub rax, rsp"},
+    {(u8*)"\x29\xe0",                         "sub eax, esp"},
+    {(u8*)"\x2a\x00",                         "sub al, byte ptr [rax]"},
+    {(u8*)"\x2b\x00",                         "sub eax, dword ptr [rax]"},
+    {(u8*)"\x2c\x10",                         "sub al, 0x10"},
+    {(u8*)"\x66\x2d\x00\x10",                 "sub ax, 0x1000"},
+    {(u8*)"\x2d\x00\x10\x00\x00",             "sub eax, 0x1000"},
+    {(u8*)"\x38\xd8",                         "cmp al, bl"},
+    {(u8*)"\x48\x39\xe0",                     "cmp rax, rsp"},
+    {(u8*)"\x39\xe0",                         "cmp eax, esp"},
+    {(u8*)"\x3a\x00",                         "cmp al, byte ptr [rax]"},
+    {(u8*)"\x3b\x00",                         "cmp eax, dword ptr [rax]"},
+    {(u8*)"\x3c\x10",                         "cmp al, 0x10"},
+    {(u8*)"\x66\x3d\x00\x10",                 "cmp ax, 0x1000"},
+    {(u8*)"\x3d\x00\x10\x00\x00",             "cmp eax, 0x1000"},
+
 };
 
 static void run_tests() {
     printf("Running Tests:\n");
-    for (int i = 0; i < (sizeof(tests)/sizeof(tests[0])); i++) {
+    int test_count = sizeof(tests)/sizeof(tests[0]);
+    int failed_tests = 0;
+    for (int i = 0; i < test_count; i++) {
         Testcase test = tests[i];
         Disassembler dasm = {test.machine_code, 0};
         Instruction inst = disassemb(&dasm);
         char* disasm = print_inst(inst, temp_builder());
 
-        u32 lev = lev_dist(make_string(test.disassembly), make_string(disasm));
+        // u32 lev = lev_dist(make_string(test.disassembly), make_string(disasm));
+
+        u32 lev = strcmp(disasm, test.disassembly);
+
+        if (lev) {printf("\033[1;31m"); failed_tests++;}
+        else     printf("\033[1;32m");
 
         printf("%3d %-50s %-50s (lev: %u)\n", i, test.disassembly, disasm, lev);
+
+        printf("\033[0m");
     }
+
+    printf("%d failed of %d tests\n\n", failed_tests, test_count);
 }
 
 int main(int argc, char* argv[]) {
