@@ -45,6 +45,8 @@ typedef int func();
 
 #define not_immplemented(msg) do { printf("[ERROR]: Not immplemented \""msg"\" at %s:%d\n", __FILE__, __LINE__); /*exit(1);*/ } while(0)
 
+#define array_len(array) (sizeof(array)/sizeof(array[0]))
+
 /*
 
 Instruction layout:
@@ -279,6 +281,8 @@ prefix and opcode information:
 
 
 static int opcode_visits[0x100] = {0};
+static int opcode_ext_visits[18][0b1000] = {0};
+
 
 void opcodemap_lookup(Disassembler* dasm, Instruction* inst) {
 
@@ -324,28 +328,37 @@ void opcodemap_lookup(Disassembler* dasm, Instruction* inst) {
         inst->mem   |= (byte & 0b0001) << 3;\
     }
 
-    // immediate group 1
-    #define group1 switch (opcode_ex) {\
-        case 0b000: inst->mnemonic = "add"; inst->encoding = IE_MemImm; break;\
-        case 0b001: inst->mnemonic = "or";  inst->encoding = IE_MemImm; break;\
-        case 0b010: inst->mnemonic = "adc"; inst->encoding = IE_MemImm; break;\
-        case 0b011: inst->mnemonic = "sbb"; inst->encoding = IE_MemImm; break;\
-        case 0b100: inst->mnemonic = "and"; inst->encoding = IE_MemImm; break;\
-        case 0b101: inst->mnemonic = "sub"; inst->encoding = IE_MemImm; break;\
-        case 0b110: inst->mnemonic = "xor"; inst->encoding = IE_MemImm; break;\
-        case 0b111: inst->mnemonic = "cmp"; inst->encoding = IE_MemImm; break;\
-    }
+    // TODO: note that operand size appears to be 1 byte for all opcodes where the lower 4bits of the opcode is an even number. Use this fact to consolidate the code
 
-    #define group11 switch (opcode_ex) {\
-        case 0b000: inst->mnemonic = "mov"; inst->encoding = IE_MemImm; break;\
-        case 0b001: break;\
-        case 0b010: break;\
-        case 0b011: break;\
-        case 0b100: break;\
-        case 0b101: break;\
-        case 0b110: break;\
-        case 0b111: break;\
-    }
+    // immediate group 1
+    #define group1\
+        opcode_ext_visits[0][opcode_ex]++;\
+        inst->encoding = IE_MemImm;\
+        if (1 & byte); else inst->operand_bytesize = 1;\
+        switch (opcode_ex) {\
+            case 0b000: inst->mnemonic = "add"; break;\
+            case 0b001: inst->mnemonic = "or";  break;\
+            case 0b010: inst->mnemonic = "adc"; break;\
+            case 0b011: inst->mnemonic = "sbb"; break;\
+            case 0b100: inst->mnemonic = "and"; break;\
+            case 0b101: inst->mnemonic = "sub"; break;\
+            case 0b110: inst->mnemonic = "xor"; break;\
+            case 0b111: inst->mnemonic = "cmp"; break;\
+        }
+
+    #define group11\
+        opcode_ext_visits[11][opcode_ex]++;\
+        if (1 & byte); else inst->operand_bytesize = 1;\
+        switch (opcode_ex) {\
+            case 0b000: inst->mnemonic = "mov"; inst->encoding = IE_MemImm; break;\
+            case 0b001: break;\
+            case 0b010: break;\
+            case 0b011: break;\
+            case 0b100: break;\
+            case 0b101: break;\
+            case 0b110: break;\
+            case 0b111: break;\
+        }
 
     u8 byte = get_byte(dasm);
     // TODO: fix possible overflow here:
@@ -422,7 +435,11 @@ void modrm_sib_disp(Disassembler* dasm, Instruction* inst) {
     inst->mem |= (RegisterIndex)RM;
 
     if (MOD == 0b11) { // rm is a register not an address
-        if (inst->encoding == IE_MemReg) {
+        if (inst->encoding == IE_MemImm) {
+            inst->encoding = IE_RegImm;
+            inst->reg = inst->mem;
+            return;
+        } else if (inst->encoding == IE_MemReg) {
             RegisterIndex temp = inst->mem;
             inst->mem = inst->reg;
             inst->reg = temp;
@@ -499,11 +516,21 @@ typedef struct Testcase {
 static const Testcase tests[] = {
     {(u8*)"\x03\x07",                         "add eax, dword ptr [rdi]"},
     {(u8*)"\x67\x48\x01\x38",                 "add qword ptr [eax], rdi"},
+
+    // Grp11 - MOV 0xC7
     {(u8*)"\xc7\x00\x10\x00\x00\x00",         "mov dword ptr [rax], 0x10"},
     {(u8*)"\xc7\x40\x01\x10\x00\x00\x00",     "mov dword ptr [rax + 0x1], 0x10"},
     {(u8*)"\xc7\x04\x18\x10\x00\x00\x00",     "mov dword ptr [rax + rbx*1], 0x10"},
     {(u8*)"\xc7\x44\x18\x01\x10\x00\x00\x00", "mov dword ptr [rax + rbx*1 + 0x1], 0x10"},
     {(u8*)"\xc7\x44\x58\x01\x10\x00\x00\x00", "mov dword ptr [rax + rbx*2 + 0x1], 0x10"},
+    // Grp11 - MOV 0xC6
+    {(u8*)"\xc6\x00\x10",                     "mov byte ptr [rax], 0x10"},
+    {(u8*)"\xc6\x40\x01\x10",                 "mov byte ptr [rax + 0x1], 0x10"},
+    {(u8*)"\xc6\x04\x18\x10",                 "mov byte ptr [rax + rbx*1], 0x10"},
+    {(u8*)"\xc6\x44\x18\x01\x10",             "mov byte ptr [rax + rbx*1 + 0x1], 0x10"},
+    {(u8*)"\xc6\x44\x58\x01\x10",             "mov byte ptr [rax + rbx*2 + 0x1], 0x10"},
+
+    // 
     {(u8*)"\x00\xd8",                         "add al, bl"},
     {(u8*)"\x48\x01\xe0",                     "add rax, rsp"},
     {(u8*)"\x01\xe0",                         "add eax, esp"},
@@ -569,11 +596,37 @@ static const Testcase tests[] = {
     {(u8*)"\x66\x3d\x00\x10",                 "cmp ax, 0x1000"},
     {(u8*)"\x3d\x00\x10\x00\x00",             "cmp eax, 0x1000"},
 
+    // Grp1 - Immediates
+    {(u8*)"\x80\xc1\xff",                     "add cl, 0xff"},
+    {(u8*)"\x81\xc2\x00\x10\x00\x10",         "add edx, 0x10001000"},
+    {(u8*)"\x83\xc3\x01",                     "add ebx, 0x1"},
+    {(u8*)"\x80\xc9\xff",                     "or cl, 0xff"},
+    {(u8*)"\x81\xca\x00\x10\x00\x10",         "or edx, 0x10001000"},
+    {(u8*)"\x83\xcb\x01",                     "or ebx, 0x1"},
+    {(u8*)"\x80\xd1\xff",                     "adc cl, 0xff"},
+    {(u8*)"\x81\xd2\x00\x10\x00\x10",         "adc edx, 0x10001000"},
+    {(u8*)"\x83\xd3\x01",                     "adc ebx, 0x1"},
+    {(u8*)"\x80\xd9\xff",                     "sbb cl, 0xff"},
+    {(u8*)"\x81\xda\x00\x10\x00\x10",         "sbb edx, 0x10001000"},
+    {(u8*)"\x83\xdb\x01",                     "sbb ebx, 0x1"},
+    {(u8*)"\x80\xe1\xff",                     "and cl, 0xff"},
+    {(u8*)"\x81\xe2\x00\x10\x00\x10",         "and edx, 0x10001000"},
+    {(u8*)"\x83\xe3\x01",                     "and ebx, 0x1"},
+    {(u8*)"\x80\xe9\xff",                     "sub cl, 0xff"},
+    {(u8*)"\x81\xea\x00\x10\x00\x10",         "sub edx, 0x10001000"},
+    {(u8*)"\x83\xeb\x01",                     "sub ebx, 0x1"},
+    {(u8*)"\x80\xf1\xff",                     "xor cl, 0xff"},
+    {(u8*)"\x81\xf2\x00\x10\x00\x10",         "xor edx, 0x10001000"},
+    {(u8*)"\x83\xf3\x01",                     "xor ebx, 0x1"},
+    {(u8*)"\x80\xf9\xff",                     "cmp cl, 0xff"},
+    {(u8*)"\x81\xfa\x00\x10\x00\x10",         "cmp edx, 0x10001000"},
+    {(u8*)"\x83\xfb\x01",                     "cmp ebx, 0x1"},
+
 };
 
 static void run_tests() {
     printf("Running Tests:\n");
-    int test_count = sizeof(tests)/sizeof(tests[0]);
+    int test_count = array_len(tests);
     int failed_tests = 0;
     for (int i = 0; i < test_count; i++) {
         Testcase test = tests[i];
@@ -582,7 +635,6 @@ static void run_tests() {
         char* disasm = print_inst(inst, temp_builder());
 
         // u32 lev = lev_dist(make_string(test.disassembly), make_string(disasm));
-
         u32 lev = strcmp(disasm, test.disassembly);
 
         if (lev) {printf("\033[1;31m"); failed_tests++;}
@@ -640,6 +692,21 @@ mov dword ptr [rax + rbx*2 + 1], 16
         printf("%x0:", i);
         for (int j = 0; j <= 0xF; j++) {
             int visits = opcode_visits[i*0x10 + j];
+            if (visits) printf("%2d|", visits);
+            else        printf("..|");
+        }
+        printf("\n");
+    }
+
+    printf("OpCode Extension usage:\n        ");
+    for (int i = 0; i < array_len(opcode_ext_visits[0]); i++) printf("%d  ", i);
+    printf("\n");
+    for (int i = 0; i < array_len(opcode_ext_visits); i++) {
+        if (i == 0) printf("group1 :");
+        else if (i == 1) printf("group1A:");
+        else printf("group%-2d:", i);
+        for (int j = 0; j < array_len(opcode_ext_visits[i]); j++) {
+            int visits = opcode_ext_visits[i][j];
             if (visits) printf("%2d|", visits);
             else        printf("..|");
         }
