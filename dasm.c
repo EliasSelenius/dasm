@@ -37,7 +37,7 @@ typedef char bool;
 #define page_size (4*kB)
 
 u8* alloc_exec_buffer() {
-    u8* buffer = VirtualAlloc(null, 1*GB, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+    u8* buffer = VirtualAlloc(null, 1*MB, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
     return buffer;
 }
 
@@ -190,33 +190,29 @@ void print_inst_memoperand(Instruction inst, StringBuilder* sb) {
 }
 
 char* print_inst(Instruction inst, StringBuilder* sb) {
-    sb_append_format(sb, "%s ", inst.mnemonic);
+    sb_append_format(sb, "%s", inst.mnemonic);
+
     switch (inst.encoding) {
         case IE_NoOperands: break;
-        case IE_Imm: {
-            sb_append_format(sb, "0x%x", inst.immediate.int64);
-        } break;
-        case IE_RegReg: {
-            sb_append_format(sb, "%s, ", get_register_name(inst.reg, inst.operand_bytesize));
-            sb_append_format(sb, "%s",   get_register_name(inst.mem, inst.operand_bytesize));
-        } break;
+        case IE_Imm:    sb_append_format(sb, " 0x%x", inst.immediate.int64); break;
+        case IE_RegReg: sb_append_format(sb, " %s, %s", get_register_name(inst.reg, inst.operand_bytesize), get_register_name(inst.mem, inst.operand_bytesize)); break;
         case IE_RegMem: {
-            sb_append_format(sb, "%s, ", get_register_name(inst.reg, inst.operand_bytesize));
+            sb_append_format(sb, " %s, ", get_register_name(inst.reg, inst.operand_bytesize));
             print_inst_memoperand(inst, sb);
         } break;
         case IE_MemReg: {
+            sbAppend(sb, " ");
             print_inst_memoperand(inst, sb);
             sb_append_format(sb, ", %s", get_register_name(inst.reg, inst.operand_bytesize));
         } break;
-        case IE_RegImm: {
-            sb_append_format(sb, "%s", get_register_name(inst.reg, inst.operand_bytesize));
-            sb_append_format(sb, ", 0x%x", inst.immediate.int64);
-        } break;
+        case IE_RegImm: sb_append_format(sb, " %s, 0x%x", get_register_name(inst.mem, inst.operand_bytesize), inst.immediate.uint64); break;
         case IE_MemImm: {
+            sbAppend(sb, " ");
             print_inst_memoperand(inst, sb);
             sb_append_format(sb, ", 0x%x", inst.immediate.int64);
         } break;
     }
+
     return sb->content;
 }
 
@@ -243,6 +239,16 @@ u64 get_bytes(Disassembler* dasm, u8 num_bytes) {
     }
     return res;
 }
+
+static int opcode_visits[0x100] = {0};
+static int opcode_ext_visits[18][0b1000] = {0};
+
+u8 get_opcode(Disassembler* dasm) {
+    u8 opcode = get_byte(dasm);
+    opcode_visits[opcode]++;
+    return opcode;
+}
+
 
 
 /*
@@ -278,10 +284,6 @@ prefix and opcode information:
     z       = either word (when 16bit operand-size) or doubleword (when 32/64bit operand-size)
 
 */
-
-
-static int opcode_visits[0x100] = {0};
-static int opcode_ext_visits[18][0b1000] = {0};
 
 
 void opcodemap_lookup(Disassembler* dasm, Instruction* inst) {
@@ -361,7 +363,7 @@ void opcodemap_lookup(Disassembler* dasm, Instruction* inst) {
         }
 
     u8 byte = get_byte(dasm);
-    // TODO: fix possible overflow here:
+    // TODO: fix possible buffer overflow here:
     u8 opcode_ex = (dasm->buffer[dasm->index] & 0b00111000) >> 3; // this opcode extension might be applicable in some cases
 
     switch (byte) { // Opcode Map (see: Volume 2 Appendix A.3)
@@ -386,43 +388,108 @@ void opcodemap_lookup(Disassembler* dasm, Instruction* inst) {
 
     #undef row
     #undef entry
+    #undef REX
 }
 
-// OpCodeInfo get_opcode(Disassembler* dasm) {
-
-//     static const OpCodeInfo opcode_lookup[0xFF] = {
-//         /*0x00*/ [0b00000000] = {"add", true, false,  1, 0},
-//         /*0x01*/ [0b00000001] = {"add", true, false,  4, 0},
-//         /*0x02*/ [0b00000010] = {"add", true, true,   1, 0},
-//         /*0x03*/ [0b00000011] = {"add", true, true,   4, 0},
-//         /*0x80*/ [0b10000000] = {"add", true, false,  1, 1},
-//         /*0x81*/ [0b10000001] = {"add", true, false,  4, 4},
-//         /*0x83*/ [0b10000011] = {"add", true, false,  4, 1},
-
-//         /*0x88*/ [0b10001000] = {"mov", true, false,  1, 0},
-//         /*0x89*/ [0b10001001] = {"mov", true, false,  4, 0},
-//         /*0x8A*/ [0b10001010] = {"mov", true, true,   1, 0},
-//         /*0x8B*/ [0b10001011] = {"mov", true, true,   4, 0},
-
-//         /*0xC2*/ [0b11000010] = {"ret", false, false, 0, 2}, // near returns
-//         /*0xC3*/ [0b11000011] = {"ret", false, false, 0, 0},
-//         /*0xCA*/ [0b11001010] = {"ret", false, false, 0, 2}, // far returns
-//         /*0xCB*/ [0b11001011] = {"ret", false, false, 0, 0},
-//     };
-
-//     // TODO: 2 byte opcodes...
-//     u8 opcode = get_byte(dasm);
-//     OpCodeInfo info = opcode_lookup[opcode];
-//     if (info.mnemonic) return info;
-
-//     not_immplemented();
-// }
-
 /*
-mov eax, [ecx]    ->     8b 01  in x86
-mov eax, [ecx]    ->  67 8b 01  in x64
-mov rax, [rcx]    ->  48 8b 01  in x64
+    operation & operand encoding
+    prefix
+    invalid
+    2 byte opcode
+    opcode extension group
 */
+
+static void parse_opcode(Disassembler* dasm, Instruction* inst) {
+
+    static char* opcode_mnemonics[] = { // TODO: make "prefix" more descriptive
+           "add",    "add",    "add",    "add",    "add",    "add",     null,     null,     "or",     "or",     "or",     "or",     "or",     "or",     null,     null,
+           "adc",    "adc",    "adc",    "adc",    "adc",    "adc",     null,     null,    "sbb",    "sbb",    "sbb",    "sbb",    "sbb",    "sbb",     null,     null,
+           "and",    "and",    "and",    "and",    "and",    "and", "prefix",     null,    "sub",    "sub",    "sub",    "sub",    "sub",    "sub", "prefix",     null,
+           "xor",    "xor",    "xor",    "xor",    "xor",    "xor", "prefix",     null,    "cmp",    "cmp",    "cmp",    "cmp",    "cmp",    "cmp", "prefix",     null,
+           "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",
+          "push",   "push",   "push",   "push",   "push",   "push",   "push",   "push",    "pop",    "pop",    "pop",    "pop",    "pop",    "pop",    "pop",    "pop",
+            null,     null,     null, "movsxd", "prefix", "prefix", "prefix", "prefix",   "push",   "imul",   "push",   "imul",     null,     null,     null,     null,
+        "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb",
+            null,     null,     null,     null,   "test",   "test",   "xchg",   "xchg",    "mov",    "mov",    "mov",    "mov",    "mov",    "lea",    "mov",     null,
+            null,   "xchg",   "xchg",   "xchg",   "xchg",   "xchg",   "xchg",   "xchg",     null,     null,     null,     null,     null,     null,   "shaf",   "lahf",
+           "mov",    "mov",    "mov",    "mov",     null,     null,     null,     null,   "test",   "test",     null,     null,     null,     null,     null,     null,
+           "mov",    "mov",    "mov",    "mov",    "mov",    "mov",    "mov",    "mov",    "mov",    "mov",    "mov",    "mov",    "mov",    "mov",    "mov",    "mov",
+            null,     null,    "ret",    "ret",     null,     null,     null,     null,  "enter",  "leave",    "ret",    "ret",   "int3",    "int",     null,     null,
+            null,     null,     null,     null,     null,     null,     null,     null,    "esc",    "esc",    "esc",    "esc",    "esc",    "esc",    "esc",    "esc",
+            null,     null,   "loop",     null,     "in",     "in",    "out",    "out",   "call",    "jmp",    "jmp",    "jmp",     "in",     "in",    "out",    "out",
+        "prefix",   "int1", "prefix", "prefix",    "hlt",    "cmc",     null,     null,    "clc",    "stc",    "cli",    "sti",    "cld",    "std",     null,     null,
+    };
+
+
+    u8 opcode = get_opcode(dasm);
+    // TODO: fix possible buffer overflow here:
+    // u8 opcode_ext = (dasm->buffer[dasm->index] & 0b00111000) >> 3; // this opcode extension might be applicable in some cases
+
+
+    // TODO: check for other prefixes...
+    switch (opcode) {
+        case 0x64: break;
+        case 0x65: break;
+        case 0x66: inst->operand_bytesize = 2; break;
+        case 0x67: inst->address_bytesize = 4; break;
+        default: goto opcode_not_used;
+    }
+
+    opcode = get_opcode(dasm);
+    opcode_not_used:
+
+    if ((opcode & 0xF0) == 0x40) { // REX
+        if (opcode & 0b1000) inst->operand_bytesize = 8;
+        inst->reg   |= (opcode & 0b0100) << 1;
+        inst->index |= (opcode & 0b0010) << 2;
+        inst->mem   |= (opcode & 0b0001) << 3;
+
+        opcode = get_opcode(dasm);
+    }
+
+    inst->mnemonic = opcode_mnemonics[opcode];
+
+    #define EbGb   { inst->encoding = IE_MemReg; inst->operand_bytesize = 1; }
+    #define EvGv   { inst->encoding = IE_MemReg; }
+    #define GbEb   { inst->encoding = IE_RegMem; inst->operand_bytesize = 1; }
+    #define GvEv   { inst->encoding = IE_RegMem; }
+    #define AL_Ib  { inst->encoding = IE_RegImm; inst->operand_bytesize = 1; inst->reg = 0; }
+    #define rAX_Iz { inst->encoding = IE_RegImm;                             inst->reg = 0; }
+    #define Ib     { inst->encoding = IE_Imm;    inst->operand_bytesize = 1; }
+
+    #define col_Ib { inst->encoding = IE_RegImm; inst->operand_bytesize = 1; inst->mem |= opcode&0b00000111; }
+    #define col_Iv { inst->encoding = IE_RegImm; inst->mem |= opcode&0b00000111; }
+
+    #define X(num, code) case (num): code; break;
+    #define row(sn, aa, ab, ac, ad, ba, bb, bc, bd, ca, cb, cc, cd, da, db, dc, dd)\
+        X(sn+0x00, aa) X(sn+0x01, ab) X(sn+0x02, ac) X(sn+0x03, ad)\
+        X(sn+0x04, ba) X(sn+0x05, bb) X(sn+0x06, bc) X(sn+0x07, bd)\
+        X(sn+0x08, ca) X(sn+0x09, cb) X(sn+0x0A, cc) X(sn+0x0B, cd)\
+        X(sn+0x0C, da) X(sn+0x0D, db) X(sn+0x0E, dc) X(sn+0x0F, dd)
+
+    switch (opcode) {
+        //            0x00      0x01      0x02      0x03      0x04      0x05      0x06      0x07      0x08      0x09      0x0A      0x0B      0x0C      0x0D      0x0E      0x0F
+        row(0x00,     EbGb,     EvGv,     GbEb,     GvEv,    AL_Ib,   rAX_Iz,         ,         ,     EbGb,     EvGv,     GbEb,     GvEv,    AL_Ib,   rAX_Iz,         ,         )
+        row(0x10,     EbGb,     EvGv,     GbEb,     GvEv,    AL_Ib,   rAX_Iz,         ,         ,     EbGb,     EvGv,     GbEb,     GvEv,    AL_Ib,   rAX_Iz,         ,         )
+        row(0x20,     EbGb,     EvGv,     GbEb,     GvEv,    AL_Ib,   rAX_Iz,         ,         ,     EbGb,     EvGv,     GbEb,     GvEv,    AL_Ib,   rAX_Iz,         ,         )
+        row(0x30,     EbGb,     EvGv,     GbEb,     GvEv,    AL_Ib,   rAX_Iz,         ,         ,     EbGb,     EvGv,     GbEb,     GvEv,    AL_Ib,   rAX_Iz,         ,         )
+        row(0x40,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         )
+        row(0x50,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         )
+        row(0x60,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         )
+        row(0x70,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         )
+        row(0x80,         ,         ,         ,         ,         ,         ,         ,         ,     EbGb,     EvGv,     GbEb,     GvEv,         ,         ,         ,         )
+        row(0x90,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         )
+        row(0xA0,         ,         ,         ,         ,         ,         ,         ,         ,    AL_Ib,   rAX_Iz,         ,         ,         ,         ,         ,         )
+        row(0xB0,   col_Ib,   col_Ib,   col_Ib,   col_Ib,   col_Ib,   col_Ib,   col_Ib,   col_Ib,   col_Iv,   col_Iv,   col_Iv,   col_Iv,   col_Iv,   col_Iv,   col_Iv,   col_Iv)
+        row(0xC0,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,       Ib,         ,         )
+        row(0xD0,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         )
+        row(0xE0,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         )
+        row(0xF0,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         )
+    }
+
+    #undef row
+    #undef X
+}
 
 
 void modrm_sib_disp(Disassembler* dasm, Instruction* inst) {
@@ -491,9 +558,12 @@ Instruction disassemb(Disassembler* dasm) {
     inst.operand_bytesize = 4;
     inst.address_bytesize = 8;
 
-    do {
-        opcodemap_lookup(dasm, &inst);
-    } while (inst.mnemonic == null);
+
+    // do {
+    //     opcodemap_lookup(dasm, &inst);
+    // } while (inst.mnemonic == null);
+
+    parse_opcode(dasm, &inst);
 
     switch (inst.encoding) {
         case IE_NoOperands: break;
@@ -508,145 +578,219 @@ Instruction disassemb(Disassembler* dasm) {
     return inst;
 }
 
-typedef struct Testcase {
-    u8* machine_code;
-    char* disassembly;
-} Testcase;
 
-static const Testcase tests[] = {
-    {(u8*)"\x03\x07",                         "add eax, dword ptr [rdi]"},
-    {(u8*)"\x67\x48\x01\x38",                 "add qword ptr [eax], rdi"},
+static u32 run_test(u32 test_index, u32 code_count, u8* code, char* expected_result) {
+    Disassembler dasm = {code, 0};
+    Instruction inst = disassemb(&dasm);
+    char* result = print_inst(inst, temp_builder());
 
-    // Grp11 - MOV 0xC7
-    {(u8*)"\xc7\x00\x10\x00\x00\x00",         "mov dword ptr [rax], 0x10"},
-    {(u8*)"\xc7\x40\x01\x10\x00\x00\x00",     "mov dword ptr [rax + 0x1], 0x10"},
-    {(u8*)"\xc7\x04\x18\x10\x00\x00\x00",     "mov dword ptr [rax + rbx*1], 0x10"},
-    {(u8*)"\xc7\x44\x18\x01\x10\x00\x00\x00", "mov dword ptr [rax + rbx*1 + 0x1], 0x10"},
-    {(u8*)"\xc7\x44\x58\x01\x10\x00\x00\x00", "mov dword ptr [rax + rbx*2 + 0x1], 0x10"},
-    // Grp11 - MOV 0xC6
-    {(u8*)"\xc6\x00\x10",                     "mov byte ptr [rax], 0x10"},
-    {(u8*)"\xc6\x40\x01\x10",                 "mov byte ptr [rax + 0x1], 0x10"},
-    {(u8*)"\xc6\x04\x18\x10",                 "mov byte ptr [rax + rbx*1], 0x10"},
-    {(u8*)"\xc6\x44\x18\x01\x10",             "mov byte ptr [rax + rbx*1 + 0x1], 0x10"},
-    {(u8*)"\xc6\x44\x58\x01\x10",             "mov byte ptr [rax + rbx*2 + 0x1], 0x10"},
+    u32 failed = strcmp(result, expected_result);
 
-    // 
-    {(u8*)"\x00\xd8",                         "add al, bl"},
-    {(u8*)"\x48\x01\xe0",                     "add rax, rsp"},
-    {(u8*)"\x01\xe0",                         "add eax, esp"},
-    {(u8*)"\x02\x00",                         "add al, byte ptr [rax]"},
-    {(u8*)"\x03\x00",                         "add eax, dword ptr [rax]"},
-    {(u8*)"\x04\x10",                         "add al, 0x10"},
-    {(u8*)"\x66\x05\x00\x10",                 "add ax, 0x1000"},
-    {(u8*)"\x05\x00\x10\x00\x00",             "add eax, 0x1000"},
-    {(u8*)"\x10\xd8",                         "adc al, bl"},
-    {(u8*)"\x48\x11\xe0",                     "adc rax, rsp"},
-    {(u8*)"\x11\xe0",                         "adc eax, esp"},
-    {(u8*)"\x12\x00",                         "adc al, byte ptr [rax]"},
-    {(u8*)"\x13\x00",                         "adc eax, dword ptr [rax]"},
-    {(u8*)"\x14\x10",                         "adc al, 0x10"},
-    {(u8*)"\x66\x15\x00\x10",                 "adc ax, 0x1000"},
-    {(u8*)"\x15\x00\x10\x00\x00",             "adc eax, 0x1000"},
-    {(u8*)"\x20\xd8",                         "and al, bl"},
-    {(u8*)"\x48\x21\xe0",                     "and rax, rsp"},
-    {(u8*)"\x21\xe0",                         "and eax, esp"},
-    {(u8*)"\x22\x00",                         "and al, byte ptr [rax]"},
-    {(u8*)"\x23\x00",                         "and eax, dword ptr [rax]"},
-    {(u8*)"\x24\x10",                         "and al, 0x10"},
-    {(u8*)"\x66\x25\x00\x10",                 "and ax, 0x1000"},
-    {(u8*)"\x25\x00\x10\x00\x00",             "and eax, 0x1000"},
-    {(u8*)"\x30\xd8",                         "xor al, bl"},
-    {(u8*)"\x48\x31\xe0",                     "xor rax, rsp"},
-    {(u8*)"\x31\xe0",                         "xor eax, esp"},
-    {(u8*)"\x32\x00",                         "xor al, byte ptr [rax]"},
-    {(u8*)"\x33\x00",                         "xor eax, dword ptr [rax]"},
-    {(u8*)"\x34\x10",                         "xor al, 0x10"},
-    {(u8*)"\x66\x35\x00\x10",                 "xor ax, 0x1000"},
-    {(u8*)"\x35\x00\x10\x00\x00",             "xor eax, 0x1000"},
-    {(u8*)"\x08\xd8",                         "or al, bl"},
-    {(u8*)"\x48\x09\xe0",                     "or rax, rsp"},
-    {(u8*)"\x09\xe0",                         "or eax, esp"},
-    {(u8*)"\x0a\x00",                         "or al, byte ptr [rax]"},
-    {(u8*)"\x0b\x00",                         "or eax, dword ptr [rax]"},
-    {(u8*)"\x0c\x10",                         "or al, 0x10"},
-    {(u8*)"\x66\x0d\x00\x10",                 "or ax, 0x1000"},
-    {(u8*)"\x0d\x00\x10\x00\x00",             "or eax, 0x1000"},
-    {(u8*)"\x18\xd8",                         "sbb al, bl"},
-    {(u8*)"\x48\x19\xe0",                     "sbb rax, rsp"},
-    {(u8*)"\x19\xe0",                         "sbb eax, esp"},
-    {(u8*)"\x1a\x00",                         "sbb al, byte ptr [rax]"},
-    {(u8*)"\x1b\x00",                         "sbb eax, dword ptr [rax]"},
-    {(u8*)"\x1c\x10",                         "sbb al, 0x10"},
-    {(u8*)"\x66\x1d\x00\x10",                 "sbb ax, 0x1000"},
-    {(u8*)"\x1d\x00\x10\x00\x00",             "sbb eax, 0x1000"},
-    {(u8*)"\x28\xd8",                         "sub al, bl"},
-    {(u8*)"\x48\x29\xe0",                     "sub rax, rsp"},
-    {(u8*)"\x29\xe0",                         "sub eax, esp"},
-    {(u8*)"\x2a\x00",                         "sub al, byte ptr [rax]"},
-    {(u8*)"\x2b\x00",                         "sub eax, dword ptr [rax]"},
-    {(u8*)"\x2c\x10",                         "sub al, 0x10"},
-    {(u8*)"\x66\x2d\x00\x10",                 "sub ax, 0x1000"},
-    {(u8*)"\x2d\x00\x10\x00\x00",             "sub eax, 0x1000"},
-    {(u8*)"\x38\xd8",                         "cmp al, bl"},
-    {(u8*)"\x48\x39\xe0",                     "cmp rax, rsp"},
-    {(u8*)"\x39\xe0",                         "cmp eax, esp"},
-    {(u8*)"\x3a\x00",                         "cmp al, byte ptr [rax]"},
-    {(u8*)"\x3b\x00",                         "cmp eax, dword ptr [rax]"},
-    {(u8*)"\x3c\x10",                         "cmp al, 0x10"},
-    {(u8*)"\x66\x3d\x00\x10",                 "cmp ax, 0x1000"},
-    {(u8*)"\x3d\x00\x10\x00\x00",             "cmp eax, 0x1000"},
+    if (failed) printf("\033[1;31m");
+    else        printf("\033[1;32m");
 
-    // Grp1 - Immediates
-    {(u8*)"\x80\xc1\xff",                     "add cl, 0xff"},
-    {(u8*)"\x81\xc2\x00\x10\x00\x10",         "add edx, 0x10001000"},
-    {(u8*)"\x83\xc3\x01",                     "add ebx, 0x1"},
-    {(u8*)"\x80\xc9\xff",                     "or cl, 0xff"},
-    {(u8*)"\x81\xca\x00\x10\x00\x10",         "or edx, 0x10001000"},
-    {(u8*)"\x83\xcb\x01",                     "or ebx, 0x1"},
-    {(u8*)"\x80\xd1\xff",                     "adc cl, 0xff"},
-    {(u8*)"\x81\xd2\x00\x10\x00\x10",         "adc edx, 0x10001000"},
-    {(u8*)"\x83\xd3\x01",                     "adc ebx, 0x1"},
-    {(u8*)"\x80\xd9\xff",                     "sbb cl, 0xff"},
-    {(u8*)"\x81\xda\x00\x10\x00\x10",         "sbb edx, 0x10001000"},
-    {(u8*)"\x83\xdb\x01",                     "sbb ebx, 0x1"},
-    {(u8*)"\x80\xe1\xff",                     "and cl, 0xff"},
-    {(u8*)"\x81\xe2\x00\x10\x00\x10",         "and edx, 0x10001000"},
-    {(u8*)"\x83\xe3\x01",                     "and ebx, 0x1"},
-    {(u8*)"\x80\xe9\xff",                     "sub cl, 0xff"},
-    {(u8*)"\x81\xea\x00\x10\x00\x10",         "sub edx, 0x10001000"},
-    {(u8*)"\x83\xeb\x01",                     "sub ebx, 0x1"},
-    {(u8*)"\x80\xf1\xff",                     "xor cl, 0xff"},
-    {(u8*)"\x81\xf2\x00\x10\x00\x10",         "xor edx, 0x10001000"},
-    {(u8*)"\x83\xf3\x01",                     "xor ebx, 0x1"},
-    {(u8*)"\x80\xf9\xff",                     "cmp cl, 0xff"},
-    {(u8*)"\x81\xfa\x00\x10\x00\x10",         "cmp edx, 0x10001000"},
-    {(u8*)"\x83\xfb\x01",                     "cmp ebx, 0x1"},
+    printf("%3d    ", test_index);
 
-};
-
-static void run_tests() {
-    printf("Running Tests:\n");
-    int test_count = array_len(tests);
-    int failed_tests = 0;
-    for (int i = 0; i < test_count; i++) {
-        Testcase test = tests[i];
-        Disassembler dasm = {test.machine_code, 0};
-        Instruction inst = disassemb(&dasm);
-        char* disasm = print_inst(inst, temp_builder());
-
-        // u32 lev = lev_dist(make_string(test.disassembly), make_string(disasm));
-        u32 lev = strcmp(disasm, test.disassembly);
-
-        if (lev) {printf("\033[1;31m"); failed_tests++;}
-        else     printf("\033[1;32m");
-
-        printf("%3d %-50s %-50s (lev: %u)\n", i, test.disassembly, disasm, lev);
-
-        printf("\033[0m");
+    { // print machine code
+        u32 hex_count = 0;
+        for (hex_count = 0; hex_count < code_count; hex_count++) printf(" %02x", code[hex_count]);
+        for (; hex_count < 15; hex_count++) printf("   ");
     }
 
-    printf("%d failed of %d tests\n\n", failed_tests, test_count);
+    printf(" %-50s %-50s %s\n", expected_result, result, failed ? "Failed" : "Passed");
+
+    printf("\033[0m");
+
+    return failed ? 0 : 1;
 }
+
+static void run_tests() {
+
+    u32 test_index = 0;
+    u32 passed = 0;
+
+    #define test(code, dasm) passed += run_test(test_index++, sizeof(code), (u8*)code, dasm);
+    #define test_header(msg) printf("%s\n", msg);
+
+    printf("Running Tests:\n      %-45s  %-50s %-50s %s\n", "Machine Code:", "Expected:", "Got:", "Status:");
+
+    test("\x03\x07", "add eax, dword ptr [rdi]")
+    test("\x67\x48\x01\x38", "add qword ptr [eax], rdi")
+
+    test_header("Grp11 - MOV 0xC7")
+    test("\xc7\x00\x10\x00\x00\x00", "mov dword ptr [rax], 0x10")
+    test("\xc7\x40\x01\x10\x00\x00\x00", "mov dword ptr [rax + 0x1], 0x10")
+    test("\xc7\x04\x18\x10\x00\x00\x00", "mov dword ptr [rax + rbx*1], 0x10")
+    test("\xc7\x44\x18\x01\x10\x00\x00\x00", "mov dword ptr [rax + rbx*1 + 0x1], 0x10")
+    test("\xc7\x44\x58\x01\x10\x00\x00\x00", "mov dword ptr [rax + rbx*2 + 0x1], 0x10")
+    test_header("Grp11 - MOV 0xC6")
+    test("\xc6\x00\x10", "mov byte ptr [rax], 0x10")
+    test("\xc6\x40\x01\x10", "mov byte ptr [rax + 0x1], 0x10")
+    test("\xc6\x04\x18\x10", "mov byte ptr [rax + rbx*1], 0x10")
+    test("\xc6\x44\x18\x01\x10", "mov byte ptr [rax + rbx*1 + 0x1], 0x10")
+    test("\xc6\x44\x58\x01\x10", "mov byte ptr [rax + rbx*2 + 0x1], 0x10")
+
+    test_header("")
+    test("\x00\xd8", "add al, bl")
+    test("\x48\x01\xe0", "add rax, rsp")
+    test("\x01\xe0", "add eax, esp")
+    test("\x02\x00", "add al, byte ptr [rax]")
+    test("\x03\x00", "add eax, dword ptr [rax]")
+    test("\x04\x10", "add al, 0x10")
+    test("\x66\x05\x00\x10", "add ax, 0x1000")
+    test("\x05\x00\x10\x00\x00", "add eax, 0x1000")
+    test("\x10\xd8", "adc al, bl")
+    test("\x48\x11\xe0", "adc rax, rsp")
+    test("\x11\xe0", "adc eax, esp")
+    test("\x12\x00", "adc al, byte ptr [rax]")
+    test("\x13\x00", "adc eax, dword ptr [rax]")
+    test("\x14\x10", "adc al, 0x10")
+    test("\x66\x15\x00\x10", "adc ax, 0x1000")
+    test("\x15\x00\x10\x00\x00", "adc eax, 0x1000")
+    test("\x20\xd8", "and al, bl")
+    test("\x48\x21\xe0", "and rax, rsp")
+    test("\x21\xe0", "and eax, esp")
+    test("\x22\x00", "and al, byte ptr [rax]")
+    test("\x23\x00", "and eax, dword ptr [rax]")
+    test("\x24\x10", "and al, 0x10")
+    test("\x66\x25\x00\x10", "and ax, 0x1000")
+    test("\x25\x00\x10\x00\x00", "and eax, 0x1000")
+    test("\x30\xd8", "xor al, bl")
+    test("\x48\x31\xe0", "xor rax, rsp")
+    test("\x31\xe0", "xor eax, esp")
+    test("\x32\x00", "xor al, byte ptr [rax]")
+    test("\x33\x00", "xor eax, dword ptr [rax]")
+    test("\x34\x10", "xor al, 0x10")
+    test("\x66\x35\x00\x10", "xor ax, 0x1000")
+    test("\x35\x00\x10\x00\x00", "xor eax, 0x1000")
+    test("\x08\xd8", "or al, bl")
+    test("\x48\x09\xe0", "or rax, rsp")
+    test("\x09\xe0", "or eax, esp")
+    test("\x0a\x00", "or al, byte ptr [rax]")
+    test("\x0b\x00", "or eax, dword ptr [rax]")
+    test("\x0c\x10", "or al, 0x10")
+    test("\x66\x0d\x00\x10", "or ax, 0x1000")
+    test("\x0d\x00\x10\x00\x00", "or eax, 0x1000")
+    test("\x18\xd8", "sbb al, bl")
+    test("\x48\x19\xe0", "sbb rax, rsp")
+    test("\x19\xe0", "sbb eax, esp")
+    test("\x1a\x00", "sbb al, byte ptr [rax]")
+    test("\x1b\x00", "sbb eax, dword ptr [rax]")
+    test("\x1c\x10", "sbb al, 0x10")
+    test("\x66\x1d\x00\x10", "sbb ax, 0x1000")
+    test("\x1d\x00\x10\x00\x00", "sbb eax, 0x1000")
+    test("\x28\xd8", "sub al, bl")
+    test("\x48\x29\xe0", "sub rax, rsp")
+    test("\x29\xe0", "sub eax, esp")
+    test("\x2a\x00", "sub al, byte ptr [rax]")
+    test("\x2b\x00", "sub eax, dword ptr [rax]")
+    test("\x2c\x10", "sub al, 0x10")
+    test("\x66\x2d\x00\x10", "sub ax, 0x1000")
+    test("\x2d\x00\x10\x00\x00", "sub eax, 0x1000")
+    test("\x38\xd8", "cmp al, bl")
+    test("\x48\x39\xe0", "cmp rax, rsp")
+    test("\x39\xe0", "cmp eax, esp")
+    test("\x3a\x00", "cmp al, byte ptr [rax]")
+    test("\x3b\x00", "cmp eax, dword ptr [rax]")
+    test("\x3c\x10", "cmp al, 0x10")
+    test("\x66\x3d\x00\x10", "cmp ax, 0x1000")
+    test("\x3d\x00\x10\x00\x00", "cmp eax, 0x1000")
+
+    test_header("Grp1 - Immediates")
+    test("\x80\xc1\xff", "add cl, 0xff")
+    test("\x81\xc2\x00\x10\x00\x10", "add edx, 0x10001000")
+    test("\x83\xc3\x01", "add ebx, 0x1")
+    test("\x80\xc9\xff", "or cl, 0xff")
+    test("\x81\xca\x00\x10\x00\x10", "or edx, 0x10001000")
+    test("\x83\xcb\x01", "or ebx, 0x1")
+    test("\x80\xd1\xff", "adc cl, 0xff")
+    test("\x81\xd2\x00\x10\x00\x10", "adc edx, 0x10001000")
+    test("\x83\xd3\x01", "adc ebx, 0x1")
+    test("\x80\xd9\xff", "sbb cl, 0xff")
+    test("\x81\xda\x00\x10\x00\x10", "sbb edx, 0x10001000")
+    test("\x83\xdb\x01", "sbb ebx, 0x1")
+    test("\x80\xe1\xff", "and cl, 0xff")
+    test("\x81\xe2\x00\x10\x00\x10", "and edx, 0x10001000")
+    test("\x83\xe3\x01", "and ebx, 0x1")
+    test("\x80\xe9\xff", "sub cl, 0xff")
+    test("\x81\xea\x00\x10\x00\x10", "sub edx, 0x10001000")
+    test("\x83\xeb\x01", "sub ebx, 0x1")
+    test("\x80\xf1\xff", "xor cl, 0xff")
+    test("\x81\xf2\x00\x10\x00\x10", "xor edx, 0x10001000")
+    test("\x83\xf3\x01", "xor ebx, 0x1")
+    test("\x80\xf9\xff", "cmp cl, 0xff")
+    test("\x81\xfa\x00\x10\x00\x10", "cmp edx, 0x10001000")
+    test("\x83\xfb\x01", "cmp ebx, 0x1")
+
+    test_header("Interupts")
+    test("\xcc", "int3")
+    test("\xcd\x01", "int 0x1")
+
+    test_header("test instruction")
+    test("\xa8\x12", "test al, 0x12")
+    test("\x66\xa9\x00\x10", "test ax, 0x1000")
+    test("\xa9\x00\x10\x00\x00", "test eax, 0x1000")
+    test("\x48\xa9\x00\x00\x10\x00", "test rax, 0x1000")
+
+    test_header("MOV immediate byte into byte register - 0xB0 to 0xB7")
+    test("\xb0\x0a", "mov al, 0xa")
+    test("\xb1\x0b", "mov cl, 0xb")
+    test("\xb2\x0c", "mov dl, 0xc")
+    test("\xb3\x0d", "mov bl, 0xd")
+    test("\xb4\x0e", "mov ah, 0xe")
+    test("\xb5\x0f", "mov ch, 0xf")
+    test("\xb6\xab", "mov dh, 0xab")
+    test("\xb7\xcd", "mov bh, 0xcd")
+
+    test("\x41\xb0\x0a", "mov r8b, 0xa")
+    test("\x41\xb1\x0b", "mov r9b, 0xb")
+    test("\x41\xb2\x0c", "mov r10b, 0xc")
+    test("\x41\xb3\x0d", "mov r11b, 0xd")
+    test("\x41\xb4\x0e", "mov r12b, 0xe")
+    test("\x41\xb5\x0f", "mov r13b, 0xf")
+    test("\x41\xb6\xab", "mov r14b, 0xab")
+    test("\x41\xb7\xcd", "mov r15b, 0xcd")
+
+    test_header("MOV immediate into register - 0xB8 to 0xBF")
+    test("\xb8\x0a\x00\x00\x00", "mov eax, 0xa")
+    test("\xb9\x0b\x00\x00\x00", "mov ecx, 0xb")
+    test("\xba\x0c\x00\x00\x00", "mov edx, 0xc")
+    test("\xbb\x0d\x00\x00\x00", "mov ebx, 0xd")
+    test("\xbc\x0e\x00\x00\x00", "mov esp, 0xe")
+    test("\xbd\x0f\x00\x00\x00", "mov ebp, 0xf")
+    test("\xbe\xab\x00\x00\x00", "mov esi, 0xab")
+    test("\xbf\xcd\x00\x00\x00", "mov edi, 0xcd")
+
+    test("\x41\xb8\x0a\x00\x00\x00", "mov r8d, 0xa")
+    test("\x41\xb9\x0b\x00\x00\x00", "mov r9d, 0xb")
+    test("\x41\xba\x0c\x00\x00\x00", "mov r10d, 0xc")
+    test("\x41\xbb\x0d\x00\x00\x00", "mov r11d, 0xd")
+    test("\x41\xbc\x0e\x00\x00\x00", "mov r12d, 0xe")
+    test("\x41\xbd\x0f\x00\x00\x00", "mov r13d, 0xf")
+    test("\x41\xbe\xab\x00\x00\x00", "mov r14d, 0xab")
+    test("\x41\xbf\xcd\x00\x00\x00", "mov r15d, 0xcd")
+
+    test("\x49\xb8\x00\x0a\x00\x00\x00\x00\x00\x00", "mov r8, 0xa00")
+    test("\x49\xb9\x00\x0b\x00\x00\x00\x00\x00\x00", "mov r9, 0xb00")
+    test("\x49\xba\x00\x0c\x00\x00\x00\x00\x00\x00", "mov r10, 0xc00")
+    test("\x49\xbb\x00\x0d\x00\x00\x00\x00\x00\x00", "mov r11, 0xd00")
+    test("\x49\xbc\x00\x0e\x00\x00\x00\x00\x00\x00", "mov r12, 0xe00")
+    test("\x49\xbd\x00\x0f\x00\x00\x00\x00\x00\x00", "mov r13, 0xf00")
+    test("\x49\xbe\x00\xab\x00\x00\x00\x00\x00\x00", "mov r14, 0xab00")
+    test("\x49\xbf\x00\xcd\x00\x00\x00\x00\x00\x00", "mov r15, 0xcd00")
+
+    printf("Summary: ran %d tests. %d failed. %d passed.\n\n", test_index, test_index - passed, passed);
+
+
+    //  reg8[] = {"al",  "cl",  "dl",  "bl",  "ah",  "ch",  "dh",  "bh",  "r8b", "r9b", "r10b", "r11b", "r12b", "r13b", "r14b", "r15b"};
+    // reg16[] = {"ax",  "cx",  "dx",  "bx",  "sp",  "bp",  "si",  "di",  "r8w", "r9w", "r10w", "r11w", "r12w", "r13w", "r14w", "r15w"};
+    // reg32[] = {"eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi", "r8d", "r9d", "r10d", "r11d", "r12d", "r13d", "r14d", "r15d"};
+    // reg64[] = {"rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi", "r8",  "r9",  "r10",  "r11",  "r12",  "r13",  "r14",  "r15" };
+
+    #undef test
+    #undef test_header
+};
+
 
 int main(int argc, char* argv[]) {
 /*
