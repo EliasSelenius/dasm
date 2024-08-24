@@ -88,6 +88,7 @@ N: No - this instruction prefix is not present.
 
 
 Volume 1 Chapter 3.7.5      to get explanation on SIB
+    - Table 2-3 at Volume 2 Chapter 2.1.5
 Volume 1 Chapter 4.2.2      floating-point and NaN encodings
 Volume 1 Chapter 4.8        floating-point format
 Volume 2 Chapter 2.2.1.5    64bit Immediates
@@ -249,249 +250,6 @@ u8 get_opcode(Disassembler* dasm) {
     return opcode;
 }
 
-
-
-/*
-prefix and opcode information:
-    - operation add/sub/mov etc...
-    - operand encoding. (Presence of ModRM byte and direction of operands)
-    - operand-size
-    - address-size
-    - num immediate bytes
-    - register
-    - expectation of opcode extension in ModRM byte
-*/
-
-/*
-    ADD, ADC, AND, XOR, OR, SBB, SUB, CMP
-    Eb,Gb    Ev,Gv    Gb,Eb    Gv,Ev    AL,Ib    rAX,Iz
-
-    E       = ModRM.rm field
-    G       = ModRM.reg field
-    AL      = the AL register
-    I       = Immediate value
-    rAX     = either AX, EAX or RAX depending on operand-size
-    S       = the ModRM.reg field selects a segment register
-
-    b       = a byte
-    w       = a word
-    d       = a doubleword
-    q       = a quadword
-    dq      = a double quadword
-    qq      = a quad quadword
-
-    v       = either word, doubleword or quadword depending on operand-size
-    z       = either word (when 16bit operand-size) or doubleword (when 32/64bit operand-size)
-
-*/
-
-
-void opcodemap_lookup(Disassembler* dasm, Instruction* inst) {
-
-    #define entry(num, code) case (num): opcode_visits[num]++; code break;
-    #define row(sn, aa, ab, ac, ad, ba, bb, bc, bd, ca, cb, cc, cd, da, db, dc, dd)\
-        entry(sn+0x00, aa) entry(sn+0x01, ab) entry(sn+0x02, ac) entry(sn+0x03, ad)\
-        entry(sn+0x04, ba) entry(sn+0x05, bb) entry(sn+0x06, bc) entry(sn+0x07, bd)\
-        entry(sn+0x08, ca) entry(sn+0x09, cb) entry(sn+0x0A, cc) entry(sn+0x0B, cd)\
-        entry(sn+0x0C, da) entry(sn+0x0D, db) entry(sn+0x0E, dc) entry(sn+0x0F, dd)
-
-    #define empty { inst->mnemonic = "<not_immplemented>"; inst->encoding = IE_NoOperands; }
-    #define invalid { inst->mnemonic = "<invalid>"; inst->encoding = IE_NoOperands; }
-
-    // operand encoding is specified by the three least significant bits
-    #define lt(operation_mnemonic) {\
-        inst->mnemonic = #operation_mnemonic;\
-        switch (byte & 0b111) {\
-            case 0b000: inst->encoding = IE_MemReg;\
-                        inst->operand_bytesize = 1;\
-                        break;\
-            case 0b001: inst->encoding = IE_MemReg;\
-                        break;\
-            case 0b010: inst->encoding = IE_RegMem;\
-                        inst->operand_bytesize = 1;\
-                        break;\
-            case 0b011: inst->encoding = IE_RegMem;\
-                        break;\
-            case 0b100: inst->encoding = IE_RegImm;\
-                        inst->operand_bytesize = 1;\
-                        break;/*TODO: make these refer to A register*/\
-            case 0b101: inst->encoding = IE_RegImm; break;\
-        }\
-    }
-
-    // legacy prefixes
-    #define op_size { inst->operand_bytesize = 2; }
-    #define ad_size { inst->address_bytesize = 4; }
-
-    #define REX {\
-        if (byte & 0b1000) inst->operand_bytesize = 8;\
-        inst->reg   |= (byte & 0b0100) << 1;\
-        inst->index |= (byte & 0b0010) << 2;\
-        inst->mem   |= (byte & 0b0001) << 3;\
-    }
-
-    // TODO: note that operand size appears to be 1 byte for all opcodes where the lower 4bits of the opcode is an even number. Use this fact to consolidate the code
-
-    // immediate group 1
-    #define group1\
-        opcode_ext_visits[0][opcode_ex]++;\
-        inst->encoding = IE_MemImm;\
-        if (1 & byte); else inst->operand_bytesize = 1;\
-        switch (opcode_ex) {\
-            case 0b000: inst->mnemonic = "add"; break;\
-            case 0b001: inst->mnemonic = "or";  break;\
-            case 0b010: inst->mnemonic = "adc"; break;\
-            case 0b011: inst->mnemonic = "sbb"; break;\
-            case 0b100: inst->mnemonic = "and"; break;\
-            case 0b101: inst->mnemonic = "sub"; break;\
-            case 0b110: inst->mnemonic = "xor"; break;\
-            case 0b111: inst->mnemonic = "cmp"; break;\
-        }
-
-    #define group11\
-        opcode_ext_visits[11][opcode_ex]++;\
-        if (1 & byte); else inst->operand_bytesize = 1;\
-        switch (opcode_ex) {\
-            case 0b000: inst->mnemonic = "mov"; inst->encoding = IE_MemImm; break;\
-            case 0b001: break;\
-            case 0b010: break;\
-            case 0b011: break;\
-            case 0b100: break;\
-            case 0b101: break;\
-            case 0b110: break;\
-            case 0b111: break;\
-        }
-
-    u8 byte = get_byte(dasm);
-    // TODO: fix possible buffer overflow here:
-    u8 opcode_ex = (dasm->buffer[dasm->index] & 0b00111000) >> 3; // this opcode extension might be applicable in some cases
-
-    switch (byte) { // Opcode Map (see: Volume 2 Appendix A.3)
-        //          0x00     0x01     0x02     0x03     0x04     0x05     0x06     0x07     0x08     0x09     0x0A     0x0B     0x0C     0x0D     0x0E     0x0F
-        row(0x00, lt(add), lt(add), lt(add), lt(add), lt(add), lt(add),   empty,   empty, lt (or), lt (or), lt (or), lt (or), lt (or), lt (or),   empty,   empty)
-        row(0x10, lt(adc), lt(adc), lt(adc), lt(adc), lt(adc), lt(adc),   empty,   empty, lt(sbb), lt(sbb), lt(sbb), lt(sbb), lt(sbb), lt(sbb),   empty,   empty)
-        row(0x20, lt(and), lt(and), lt(and), lt(and), lt(and), lt(and),   empty,   empty, lt(sub), lt(sub), lt(sub), lt(sub), lt(sub), lt(sub),   empty,   empty)
-        row(0x30, lt(xor), lt(xor), lt(xor), lt(xor), lt(xor), lt(xor),   empty,   empty, lt(cmp), lt(cmp), lt(cmp), lt(cmp), lt(cmp), lt(cmp),   empty,   empty)
-        row(0x40,     REX,     REX,     REX,     REX,     REX,     REX,     REX,     REX,     REX,     REX,     REX,     REX,     REX,     REX,     REX,     REX)
-        row(0x50,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty)
-        row(0x60,   empty,   empty,   empty,   empty,   empty,   empty, op_size, ad_size,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty)
-        row(0x70,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty)
-        row(0x80,  group1,  group1,  group1,  group1,   empty,   empty,   empty,   empty, lt(mov), lt(mov), lt(mov), lt(mov),   empty,   empty,   empty,   empty)
-        row(0x90,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty)
-        row(0xA0,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty)
-        row(0xB0,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty)
-        row(0xC0,   empty,   empty,   empty,   empty,   empty,   empty, group11, group11,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty)
-        row(0xD0,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty)
-        row(0xE0,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty)
-        row(0xF0,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty,   empty)
-    }
-
-    #undef row
-    #undef entry
-    #undef REX
-}
-
-/*
-    operation & operand encoding
-    prefix
-    invalid
-    2 byte opcode
-    opcode extension group
-*/
-
-static void parse_opcode(Disassembler* dasm, Instruction* inst) {
-
-    static char* opcode_mnemonics[] = { // TODO: make "prefix" more descriptive
-           "add",    "add",    "add",    "add",    "add",    "add",     null,     null,     "or",     "or",     "or",     "or",     "or",     "or",     null,     null,
-           "adc",    "adc",    "adc",    "adc",    "adc",    "adc",     null,     null,    "sbb",    "sbb",    "sbb",    "sbb",    "sbb",    "sbb",     null,     null,
-           "and",    "and",    "and",    "and",    "and",    "and", "prefix",     null,    "sub",    "sub",    "sub",    "sub",    "sub",    "sub", "prefix",     null,
-           "xor",    "xor",    "xor",    "xor",    "xor",    "xor", "prefix",     null,    "cmp",    "cmp",    "cmp",    "cmp",    "cmp",    "cmp", "prefix",     null,
-           "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",
-          "push",   "push",   "push",   "push",   "push",   "push",   "push",   "push",    "pop",    "pop",    "pop",    "pop",    "pop",    "pop",    "pop",    "pop",
-            null,     null,     null, "movsxd", "prefix", "prefix", "prefix", "prefix",   "push",   "imul",   "push",   "imul",     null,     null,     null,     null,
-        "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb",
-            null,     null,     null,     null,   "test",   "test",   "xchg",   "xchg",    "mov",    "mov",    "mov",    "mov",    "mov",    "lea",    "mov",     null,
-            null,   "xchg",   "xchg",   "xchg",   "xchg",   "xchg",   "xchg",   "xchg",     null,     null,     null,     null,     null,     null,   "shaf",   "lahf",
-           "mov",    "mov",    "mov",    "mov",     null,     null,     null,     null,   "test",   "test",     null,     null,     null,     null,     null,     null,
-           "mov",    "mov",    "mov",    "mov",    "mov",    "mov",    "mov",    "mov",    "mov",    "mov",    "mov",    "mov",    "mov",    "mov",    "mov",    "mov",
-            null,     null,    "ret",    "ret",     null,     null,     null,     null,  "enter",  "leave",    "ret",    "ret",   "int3",    "int",     null,     null,
-            null,     null,     null,     null,     null,     null,     null,     null,    "esc",    "esc",    "esc",    "esc",    "esc",    "esc",    "esc",    "esc",
-            null,     null,   "loop",     null,     "in",     "in",    "out",    "out",   "call",    "jmp",    "jmp",    "jmp",     "in",     "in",    "out",    "out",
-        "prefix",   "int1", "prefix", "prefix",    "hlt",    "cmc",     null,     null,    "clc",    "stc",    "cli",    "sti",    "cld",    "std",     null,     null,
-    };
-
-
-    u8 opcode = get_opcode(dasm);
-    // TODO: fix possible buffer overflow here:
-    // u8 opcode_ext = (dasm->buffer[dasm->index] & 0b00111000) >> 3; // this opcode extension might be applicable in some cases
-
-
-    // TODO: check for other prefixes...
-    switch (opcode) {
-        case 0x64: break;
-        case 0x65: break;
-        case 0x66: inst->operand_bytesize = 2; break;
-        case 0x67: inst->address_bytesize = 4; break;
-        default: goto opcode_not_used;
-    }
-
-    opcode = get_opcode(dasm);
-    opcode_not_used:
-
-    if ((opcode & 0xF0) == 0x40) { // REX
-        if (opcode & 0b1000) inst->operand_bytesize = 8;
-        inst->reg   |= (opcode & 0b0100) << 1;
-        inst->index |= (opcode & 0b0010) << 2;
-        inst->mem   |= (opcode & 0b0001) << 3;
-
-        opcode = get_opcode(dasm);
-    }
-
-    inst->mnemonic = opcode_mnemonics[opcode];
-
-    #define EbGb   { inst->encoding = IE_MemReg; inst->operand_bytesize = 1; }
-    #define EvGv   { inst->encoding = IE_MemReg; }
-    #define GbEb   { inst->encoding = IE_RegMem; inst->operand_bytesize = 1; }
-    #define GvEv   { inst->encoding = IE_RegMem; }
-    #define AL_Ib  { inst->encoding = IE_RegImm; inst->operand_bytesize = 1; inst->reg = 0; }
-    #define rAX_Iz { inst->encoding = IE_RegImm;                             inst->reg = 0; }
-    #define Ib     { inst->encoding = IE_Imm;    inst->operand_bytesize = 1; }
-
-    #define col_Ib { inst->encoding = IE_RegImm; inst->operand_bytesize = 1; inst->mem |= opcode&0b00000111; }
-    #define col_Iv { inst->encoding = IE_RegImm; inst->mem |= opcode&0b00000111; }
-
-    #define X(num, code) case (num): code; break;
-    #define row(sn, aa, ab, ac, ad, ba, bb, bc, bd, ca, cb, cc, cd, da, db, dc, dd)\
-        X(sn+0x00, aa) X(sn+0x01, ab) X(sn+0x02, ac) X(sn+0x03, ad)\
-        X(sn+0x04, ba) X(sn+0x05, bb) X(sn+0x06, bc) X(sn+0x07, bd)\
-        X(sn+0x08, ca) X(sn+0x09, cb) X(sn+0x0A, cc) X(sn+0x0B, cd)\
-        X(sn+0x0C, da) X(sn+0x0D, db) X(sn+0x0E, dc) X(sn+0x0F, dd)
-
-    switch (opcode) {
-        //            0x00      0x01      0x02      0x03      0x04      0x05      0x06      0x07      0x08      0x09      0x0A      0x0B      0x0C      0x0D      0x0E      0x0F
-        row(0x00,     EbGb,     EvGv,     GbEb,     GvEv,    AL_Ib,   rAX_Iz,         ,         ,     EbGb,     EvGv,     GbEb,     GvEv,    AL_Ib,   rAX_Iz,         ,         )
-        row(0x10,     EbGb,     EvGv,     GbEb,     GvEv,    AL_Ib,   rAX_Iz,         ,         ,     EbGb,     EvGv,     GbEb,     GvEv,    AL_Ib,   rAX_Iz,         ,         )
-        row(0x20,     EbGb,     EvGv,     GbEb,     GvEv,    AL_Ib,   rAX_Iz,         ,         ,     EbGb,     EvGv,     GbEb,     GvEv,    AL_Ib,   rAX_Iz,         ,         )
-        row(0x30,     EbGb,     EvGv,     GbEb,     GvEv,    AL_Ib,   rAX_Iz,         ,         ,     EbGb,     EvGv,     GbEb,     GvEv,    AL_Ib,   rAX_Iz,         ,         )
-        row(0x40,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         )
-        row(0x50,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         )
-        row(0x60,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         )
-        row(0x70,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         )
-        row(0x80,         ,         ,         ,         ,         ,         ,         ,         ,     EbGb,     EvGv,     GbEb,     GvEv,         ,         ,         ,         )
-        row(0x90,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         )
-        row(0xA0,         ,         ,         ,         ,         ,         ,         ,         ,    AL_Ib,   rAX_Iz,         ,         ,         ,         ,         ,         )
-        row(0xB0,   col_Ib,   col_Ib,   col_Ib,   col_Ib,   col_Ib,   col_Ib,   col_Ib,   col_Ib,   col_Iv,   col_Iv,   col_Iv,   col_Iv,   col_Iv,   col_Iv,   col_Iv,   col_Iv)
-        row(0xC0,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,       Ib,         ,         )
-        row(0xD0,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         )
-        row(0xE0,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         )
-        row(0xF0,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         )
-    }
-
-    #undef row
-    #undef X
-}
-
-
 void modrm_sib_disp(Disassembler* dasm, Instruction* inst) {
     u8 MOD_REG_RM = get_byte(dasm);
     u8 MOD = (MOD_REG_RM & 0b11000000) >> 6;
@@ -551,29 +309,213 @@ void modrm_sib_disp(Disassembler* dasm, Instruction* inst) {
     }
 }
 
-Instruction disassemb(Disassembler* dasm) {
+typedef enum OpcodeExtGroup {
+    Grp_None = 0,
+    Grp_1, Grp_1A,
+    Grp_2,  Grp_3,  Grp_4,  Grp_5,  Grp_6,  Grp_7,  Grp_8,  Grp_9,
+    Grp_10, Grp_11, Grp_12, Grp_13, Grp_14, Grp_15, Grp_16, Grp_17,
+} OpcodeExtGroup;
+
+static void opcode_extension(Disassembler* dasm, Instruction* inst, u8 opcode, OpcodeExtGroup group) {
+    if (group == Grp_None) return;
+
+    u8 ext = (dasm->buffer[dasm->index] & 0b00111000) >> 3;
+    opcode_ext_visits[group - 1][ext]++;
+
+    #define switch_ext(prfx, c0, c1, c2, c3, c4, c5, c6, c7) switch (ext) {\
+        case 0b000: prfx c0; break; case 0b001: prfx c1; break; case 0b010: prfx c2; break; case 0b011: prfx c3; break;\
+        case 0b100: prfx c4; break; case 0b101: prfx c5; break; case 0b110: prfx c6; break; case 0b111: prfx c7; break;}\
+
+    switch (group) {
+        case Grp_1:  switch_ext(inst->mnemonic =, "add", "or", "adc", "sbb", "and", "sub", "xor", "cmp") break;
+        case Grp_1A: break;
+        case Grp_2:  break;
+        case Grp_3:  break;
+        case Grp_4:  break;
+        case Grp_5:  break;
+        case Grp_6:  break;
+        case Grp_7:  break;
+        case Grp_8:  break;
+        case Grp_9:  break;
+        case Grp_10: break;
+        case Grp_11: break;
+        case Grp_12: break;
+        case Grp_13: break;
+        case Grp_14: break;
+        case Grp_15: break;
+        case Grp_16: break;
+        case Grp_17: break;
+    }
+
+    #undef switch_ext
+}
+
+/*
+    operation & operand encoding
+    prefix
+    invalid
+    2 byte opcode
+    opcode extension group
+*/
+/*
+prefix and opcode information:
+    - operation add/sub/mov etc...
+    - operand encoding. (Presence of ModRM byte and direction of operands)
+    - operand-size
+    - address-size
+    - num immediate bytes
+    - register
+    - expectation of opcode extension in ModRM byte
+*/
+
+
+static Instruction disassemb(Disassembler* dasm) {
+    static char* opcode_mnemonics[] = { // TODO: make "prefix" more descriptive
+    //         0x00      0x01      0x02      0x03      0x04      0x05      0x06      0x07      0x08      0x09      0x0A      0x0B      0x0C      0x0D      0x0E      0x0F
+    /*00*/    "add",    "add",    "add",    "add",    "add",    "add",     null,     null,     "or",     "or",     "or",     "or",     "or",     "or",     null,     null,
+    /*10*/    "adc",    "adc",    "adc",    "adc",    "adc",    "adc",     null,     null,    "sbb",    "sbb",    "sbb",    "sbb",    "sbb",    "sbb",     null,     null,
+    /*20*/    "and",    "and",    "and",    "and",    "and",    "and", "prefix",     null,    "sub",    "sub",    "sub",    "sub",    "sub",    "sub", "prefix",     null,
+    /*30*/    "xor",    "xor",    "xor",    "xor",    "xor",    "xor", "prefix",     null,    "cmp",    "cmp",    "cmp",    "cmp",    "cmp",    "cmp", "prefix",     null,
+    /*40*/    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",
+    /*50*/   "push",   "push",   "push",   "push",   "push",   "push",   "push",   "push",    "pop",    "pop",    "pop",    "pop",    "pop",    "pop",    "pop",    "pop",
+    /*60*/     null,     null,     null, "movsxd", "prefix", "prefix", "prefix", "prefix",   "push",   "imul",   "push",   "imul",     null,     null,     null,     null,
+    /*70*/ "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb",
+    /*80*/     null,     null,     null,     null,   "test",   "test",   "xchg",   "xchg",    "mov",    "mov",    "mov",    "mov",    "mov",    "lea",    "mov",     null,
+    /*90*/   "xchg",   "xchg",   "xchg",   "xchg",   "xchg",   "xchg",   "xchg",   "xchg",     null,     null,     null,     null,     null,     null,   "shaf",   "lahf",
+    /*A0*/    "mov",    "mov",    "mov",    "mov",     null,     null,     null,     null,   "test",   "test",     null,     null,     null,     null,     null,     null,
+    /*B0*/    "mov",    "mov",    "mov",    "mov",    "mov",    "mov",    "mov",    "mov",    "mov",    "mov",    "mov",    "mov",    "mov",    "mov",    "mov",    "mov",
+    /*C0*/     null,     null,    "ret",    "ret",     null,     null,    "mov",    "mov",  "enter",  "leave",    "ret",    "ret",   "int3",    "int",     null,     null,
+    /*D0*/     null,     null,     null,     null,     null,     null,     null,     null,    "esc",    "esc",    "esc",    "esc",    "esc",    "esc",    "esc",    "esc",
+    /*E0*/     null,     null,   "loop",     null,     "in",     "in",    "out",    "out",   "call",    "jmp",    "jmp",    "jmp",     "in",     "in",    "out",    "out",
+    /*F0*/ "prefix",   "int1", "prefix", "prefix",    "hlt",    "cmc",     null,     null,    "clc",    "stc",    "cli",    "sti",    "cld",    "std",     null,     null,
+    };
+
+
     Instruction inst = {0};
+    u8 imm_bytes = 0;
 
     // deafults for 64bit mode
     inst.operand_bytesize = 4;
     inst.address_bytesize = 8;
 
+    u8 opcode = get_opcode(dasm);
 
-    // do {
-    //     opcodemap_lookup(dasm, &inst);
-    // } while (inst.mnemonic == null);
+    switch (opcode) { // TODO: check for other prefixes...
+        case 0x64: break;
+        case 0x65: break;
+        case 0x66: inst.operand_bytesize = 2; break;
+        case 0x67: inst.address_bytesize = 4; break;
+        default: goto opcode_not_used;
+    }
 
-    parse_opcode(dasm, &inst);
+    opcode = get_opcode(dasm);
+    opcode_not_used:
+
+    if ((opcode & 0xF0) == 0x40) { // REX
+        if (opcode & 0b1000) inst.operand_bytesize = 8;
+        inst.reg   |= (opcode & 0b0100) << 1;
+        inst.index |= (opcode & 0b0010) << 2;
+        inst.mem   |= (opcode & 0b0001) << 3;
+
+        opcode = get_opcode(dasm);
+    }
+
+    inst.mnemonic = opcode_mnemonics[opcode];
+
+    #define EbGb   { inst.encoding = IE_MemReg; inst.operand_bytesize = 1; }
+    #define EvGv   { inst.encoding = IE_MemReg; }
+    #define GbEb   { inst.encoding = IE_RegMem; inst.operand_bytesize = 1; }
+    #define GvEv   { inst.encoding = IE_RegMem; }
+    #define AL_Ib  { inst.encoding = IE_RegImm; inst.operand_bytesize = 1; inst.reg = 0; imm_bytes = 1; }
+    #define rAX_Iz { inst.encoding = IE_RegImm;                            inst.reg = 0; imm_bytes = inst.operand_bytesize == 8 ? 4 : inst.operand_bytesize; }
+    #define Ib     { inst.encoding = IE_Imm;    inst.operand_bytesize = 1; imm_bytes = 1; }
+    #define Jb     { inst.encoding = IE_Imm;    inst.operand_bytesize = 1; imm_bytes = 1; }
+    #define Jz     { inst.encoding = IE_Imm;    imm_bytes = inst.operand_bytesize == 8 ? 4 : inst.operand_bytesize;}
+
+    #define EbIb { inst.encoding = IE_MemImm; inst.operand_bytesize = 1; imm_bytes = 1; }
+    #define EvIz { inst.encoding = IE_MemImm; imm_bytes = inst.operand_bytesize == 8 ? 4 : inst.operand_bytesize; }
+    #define EvIb { inst.encoding = IE_MemImm; imm_bytes = 1; }
+
+    #define col_Ib { inst.encoding = IE_RegImm; inst.operand_bytesize = 1; inst.mem |= opcode&0b00000111; imm_bytes = 1; }
+    #define col_Iv { inst.encoding = IE_RegImm; inst.mem |= opcode&0b00000111; imm_bytes = inst.operand_bytesize; }
+    #define col_rAX { inst.encoding = IE_RegReg; inst.mem |= opcode&0b00000111; }
+
+    #define X(num, code) case (num): code; break;
+    #define row(sn, aa, ab, ac, ad, ba, bb, bc, bd, ca, cb, cc, cd, da, db, dc, dd)\
+        X(sn+0x00, aa) X(sn+0x01, ab) X(sn+0x02, ac) X(sn+0x03, ad)\
+        X(sn+0x04, ba) X(sn+0x05, bb) X(sn+0x06, bc) X(sn+0x07, bd)\
+        X(sn+0x08, ca) X(sn+0x09, cb) X(sn+0x0A, cc) X(sn+0x0B, cd)\
+        X(sn+0x0C, da) X(sn+0x0D, db) X(sn+0x0E, dc) X(sn+0x0F, dd)
+
+    switch (opcode) {
+        /* legend:
+            Eb,Gb    Ev,Gv    Gb,Eb    Gv,Ev    AL,Ib    rAX,Iz
+
+            E       = ModRM.rm field
+            G       = ModRM.reg field
+            AL      = the AL register
+            I       = Immediate value
+            rAX     = either AX, EAX or RAX depending on operand-size
+            S       = the ModRM.reg field selects a segment register
+
+            b       = a byte
+            w       = a word
+            d       = a doubleword
+            q       = a quadword
+            dq      = a double quadword
+            qq      = a quad quadword
+
+            v       = either word, doubleword or quadword depending on operand-size
+            z       = either word (when 16bit operand-size) or doubleword (when 32/64bit operand-size)
+        */
+
+        //            0x00      0x01      0x02      0x03      0x04      0x05      0x06      0x07      0x08      0x09      0x0A      0x0B      0x0C      0x0D      0x0E      0x0F
+        row(0x00,     EbGb,     EvGv,     GbEb,     GvEv,    AL_Ib,   rAX_Iz,         ,         ,     EbGb,     EvGv,     GbEb,     GvEv,    AL_Ib,   rAX_Iz,         ,         )
+        row(0x10,     EbGb,     EvGv,     GbEb,     GvEv,    AL_Ib,   rAX_Iz,         ,         ,     EbGb,     EvGv,     GbEb,     GvEv,    AL_Ib,   rAX_Iz,         ,         )
+        row(0x20,     EbGb,     EvGv,     GbEb,     GvEv,    AL_Ib,   rAX_Iz,         ,         ,     EbGb,     EvGv,     GbEb,     GvEv,    AL_Ib,   rAX_Iz,         ,         )
+        row(0x30,     EbGb,     EvGv,     GbEb,     GvEv,    AL_Ib,   rAX_Iz,         ,         ,     EbGb,     EvGv,     GbEb,     GvEv,    AL_Ib,   rAX_Iz,         ,         )
+        row(0x40,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         )
+        row(0x50,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         )
+        row(0x60,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         )
+        row(0x70,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         )
+        row(0x80,     EbIb,     EvIz,     EbIb,     EvIb,         ,         ,     EbGb,     EvGv,     EbGb,     EvGv,     GbEb,     GvEv,         ,         ,         ,         )
+        row(0x90,  col_rAX,  col_rAX,  col_rAX,  col_rAX,  col_rAX,  col_rAX,  col_rAX,  col_rAX,         ,         ,         ,         ,         ,         ,         ,         )
+        row(0xA0,         ,         ,         ,         ,         ,         ,         ,         ,    AL_Ib,   rAX_Iz,         ,         ,         ,         ,         ,         )
+        row(0xB0,   col_Ib,   col_Ib,   col_Ib,   col_Ib,   col_Ib,   col_Ib,   col_Ib,   col_Ib,   col_Iv,   col_Iv,   col_Iv,   col_Iv,   col_Iv,   col_Iv,   col_Iv,   col_Iv)
+        row(0xC0,         ,         ,         ,         ,         ,         ,     EbIb,     EvIz,         ,         ,         ,         ,         ,       Ib,         ,         )
+        row(0xD0,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         )
+        row(0xE0,         ,         ,         ,         ,         ,         ,         ,         ,         ,       Jz,         ,       Jb,         ,         ,         ,         )
+        row(0xF0,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         )
+    }
+
+    static const OpcodeExtGroup ext_group[0x100] = {
+        [0x80] = Grp_1, [0x81] = Grp_1, [0x82] = Grp_1, [0x83] = Grp_1,
+        [0x8f] = Grp_1A,
+        [0xc0] = Grp_2, [0xc1] = Grp_2, [0xd0] = Grp_2, [0xd1] = Grp_2, [0xd2] = Grp_2, [0xd3] = Grp_2,
+        [0xf6] = Grp_3, [0xf7] = Grp_3,
+        [0xfe] = Grp_4,
+        [0xff] = Grp_5,
+        [0xc6] = Grp_11, [0xc7] = Grp_11,
+    };
+
+    opcode_extension(dasm, &inst, opcode, ext_group[opcode]);
+
+    #undef row
+    #undef X
+
+
 
     switch (inst.encoding) {
         case IE_NoOperands: break;
-        case IE_Imm:        inst.immediate.uint64 = get_bytes(dasm, inst.operand_bytesize); break;
         case IE_RegReg:     break;
+        case IE_Imm:        break;
+        case IE_RegImm:     break;
+        case IE_MemImm:     modrm_sib_disp(dasm, &inst); break;
         case IE_RegMem:     modrm_sib_disp(dasm, &inst); break;
         case IE_MemReg:     modrm_sib_disp(dasm, &inst); break;
-        case IE_RegImm:     inst.immediate.uint64 = get_bytes(dasm, inst.operand_bytesize); break;
-        case IE_MemImm:     modrm_sib_disp(dasm, &inst); inst.immediate.uint64 = get_bytes(dasm, inst.operand_bytesize); break;
     }
+
+    if (imm_bytes != 0) inst.immediate.uint64 = get_bytes(dasm, imm_bytes);
 
     return inst;
 }
@@ -609,13 +551,14 @@ static void run_tests() {
     u32 test_index = 0;
     u32 passed = 0;
 
-    #define test(code, dasm) passed += run_test(test_index++, sizeof(code), (u8*)code, dasm);
+    #define test(code, dasm) passed += run_test(test_index++, sizeof(code) - 1, (u8*)code, dasm);
     #define test_header(msg) printf("%s\n", msg);
 
     printf("Running Tests:\n      %-45s  %-50s %-50s %s\n", "Machine Code:", "Expected:", "Got:", "Status:");
 
     test("\x03\x07", "add eax, dword ptr [rdi]")
     test("\x67\x48\x01\x38", "add qword ptr [eax], rdi")
+    test("\xC7\x84\x24\xD4\x00\x00\x00\x00\x00\x00\x00", "mov dword ptr [rsp + 0xd4], 0x0")
 
     test_header("Grp11 - MOV 0xC7")
     test("\xc7\x00\x10\x00\x00\x00", "mov dword ptr [rax], 0x10")
@@ -730,7 +673,7 @@ static void run_tests() {
     test("\xa8\x12", "test al, 0x12")
     test("\x66\xa9\x00\x10", "test ax, 0x1000")
     test("\xa9\x00\x10\x00\x00", "test eax, 0x1000")
-    test("\x48\xa9\x00\x00\x10\x00", "test rax, 0x1000")
+    test("\x48\xa9\x00\x10\x00\x00", "test rax, 0x1000")
 
     test_header("MOV immediate byte into byte register - 0xB0 to 0xB7")
     test("\xb0\x0a", "mov al, 0xa")
@@ -779,6 +722,86 @@ static void run_tests() {
     test("\x49\xbe\x00\xab\x00\x00\x00\x00\x00\x00", "mov r14, 0xab00")
     test("\x49\xbf\x00\xcd\x00\x00\x00\x00\x00\x00", "mov r15, 0xcd00")
 
+
+    test_header("XCHG - 0x86, 0x87")
+    test("\x86\xE9", "xchg cl, ch");
+    test("\x86\x63\x01", "xchg byte ptr [rbx + 0x1], ah");
+    test("\x4D\x87\xC8", "xchg r8, r9");
+    test("\x87\x08", "xchg dword ptr [rax], ecx");
+    test("\x67\x87\x4C\xD0\x0F", "xchg dword ptr [eax + edx*8 + 0xf], ecx");
+
+    test_header("XCHG eax - 0x91 to 0x97")
+    test("\x91",     "xchg eax, ecx")
+    test("\x92",     "xchg eax, edx")
+    test("\x93",     "xchg eax, ebx")
+    test("\x94",     "xchg eax, esp")
+    test("\x95",     "xchg eax, ebp")
+    test("\x96",     "xchg eax, esi")
+    test("\x97",     "xchg eax, edi")
+    test("\x41\x90", "xchg eax, r8d")
+    test("\x41\x91", "xchg eax, r9d")
+    test("\x41\x92", "xchg eax, r10d")
+    test("\x41\x93", "xchg eax, r11d")
+    test("\x41\x94", "xchg eax, r12d")
+    test("\x41\x95", "xchg eax, r13d")
+    test("\x41\x96", "xchg eax, r14d")
+    test("\x41\x97", "xchg eax, r15d")
+
+    test_header("XCHG rax - 0x91 to 0x97")
+    test("\x48\x91", "xchg rax, rcx")
+    test("\x48\x92", "xchg rax, rdx")
+    test("\x48\x93", "xchg rax, rbx")
+    test("\x48\x94", "xchg rax, rsp")
+    test("\x48\x95", "xchg rax, rbp")
+    test("\x48\x96", "xchg rax, rsi")
+    test("\x48\x97", "xchg rax, rdi")
+    test("\x49\x90", "xchg rax, r8")
+    test("\x49\x91", "xchg rax, r9")
+    test("\x49\x92", "xchg rax, r10")
+    test("\x49\x93", "xchg rax, r11")
+    test("\x49\x94", "xchg rax, r12")
+    test("\x49\x95", "xchg rax, r13")
+    test("\x49\x96", "xchg rax, r14")
+    test("\x49\x97", "xchg rax, r15")
+
+    test_header("XCHG ax - 0x91 to 0x97")
+    test("\x66\x90",     "xchg ax, ax")
+    test("\x66\x91",     "xchg ax, cx")
+    test("\x66\x92",     "xchg ax, dx")
+    test("\x66\x93",     "xchg ax, bx")
+    test("\x66\x94",     "xchg ax, sp")
+    test("\x66\x95",     "xchg ax, bp")
+    test("\x66\x96",     "xchg ax, si")
+    test("\x66\x97",     "xchg ax, di")
+    test("\x66\x41\x90", "xchg ax, r8w")
+    test("\x66\x41\x91", "xchg ax, r9w")
+    test("\x66\x41\x92", "xchg ax, r10w")
+    test("\x66\x41\x93", "xchg ax, r11w")
+    test("\x66\x41\x94", "xchg ax, r12w")
+    test("\x66\x41\x95", "xchg ax, r13w")
+    test("\x66\x41\x96", "xchg ax, r14w")
+    test("\x66\x41\x97", "xchg ax, r15w")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     printf("Summary: ran %d tests. %d failed. %d passed.\n\n", test_index, test_index - passed, passed);
 
 
@@ -791,44 +814,7 @@ static void run_tests() {
     #undef test_header
 };
 
-
-int main(int argc, char* argv[]) {
-/*
-81 c0 ff 00 00 00
-80 c0 ff
-01 c1
-03 c1
-
-03 1d 0f 00 00 00
-03 3b
-03 46 0f
-
-83 c0 01
-83 c0 7f
-*/
-
-/*
-add ecx, 2
-add eax, ecx
-mov edi, eax
-ret
-ret 23
-mov eax, [ecx]
-
-mov r8, 0x11223344
-mov r8, 0x1122334455
-
-
-mov dword ptr [rax], 16
-mov dword ptr [rax + 1], 16
-mov dword ptr [rax + rbx], 16
-mov dword ptr [rax + rbx + 1], 16
-mov dword ptr [rax + rbx*2 + 1], 16
-
-*/
-
-    run_tests();
-
+static void print_opcode_usage() {
     printf("OpCode Map usage:\n  ");
     for (int i = 0; i <= 0xF; i++) printf(" %02x", i);
     printf("\n");
@@ -855,6 +841,45 @@ mov dword ptr [rax + rbx*2 + 1], 16
             else        printf("..|");
         }
         printf("\n");
+    }
+}
+
+
+int main(int argc, char* argv[]) {
+
+    run_tests();
+    print_opcode_usage();
+
+    printf("\n\n\n");
+
+    void* code = (void*)main;
+    Disassembler dasm = { code, 0 };
+    u32 i = 0;
+    while (true && i++ < 10) {
+
+        printf("%p ", dasm.buffer + dasm.index);
+
+        u32 begin = dasm.index;
+        Instruction inst = disassemb(&dasm);
+        u32 inst_length = dasm.index - begin;
+
+        { // print machine code
+            u32 hex_count = 0;
+            for (hex_count = 0; hex_count < inst_length; hex_count++) printf(" %02x", dasm.buffer[dasm.index - inst_length + hex_count]);
+            for (; hex_count < 15; hex_count++) printf("   ");
+        }
+
+        char* asmb = print_inst(inst, temp_builder());
+        printf("%s\n", asmb);
+
+        if (inst.mnemonic == "ret") break;
+        else if (inst.mnemonic == "jmp") {
+            u64 a = (u64)dasm.buffer + dasm.index;
+            a += inst.immediate.int32;
+            dasm.buffer = (u8*)a;
+            dasm.index = 0;
+            printf("JUMPED TO %p\n", dasm.buffer);
+        }
     }
 
     return 0;
