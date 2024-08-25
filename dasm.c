@@ -288,6 +288,8 @@ void modrm_sib_disp(Disassembler* dasm, Instruction* inst) {
             case 0b10: inst->scale = 4; break;
             case 0b11: inst->scale = 8; break;
         }
+
+        if (Index == 0b100) inst->scale = 0;
     }
 
     switch (MOD) {
@@ -782,25 +784,9 @@ static void run_tests() {
     test("\x66\x41\x96", "xchg ax, r14w")
     test("\x66\x41\x97", "xchg ax, r15w")
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    test_header("call");
+    test("\xe8\x10\x00\x00\x00", "call 0x10")
+    // test("\x66\xe8\xff\x10", "call 0x10ff") // e8 ignores operand size prefix
 
     printf("Summary: ran %d tests. %d failed. %d passed.\n\n", test_index, test_index - passed, passed);
 

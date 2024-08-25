@@ -6,7 +6,7 @@
         {
             "label": "build",
             "type": "shell",
-            "command": "clang -o dasm dasm.c -Wall",
+            "command": "clang -g -o dasm.exe dasm.c -Wall",
             "problemMatcher": [],
             "group": {
                 "kind": "build",
