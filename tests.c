@@ -320,7 +320,7 @@ int main(int argc, char* argv[]) {
     void* code = (void*)main;
     Disassembler dasm = { code, 0 };
     u32 i = 0;
-    while (true && i++ < 10) {
+    while (true && i++ < 50) {
 
         printf("%p ", dasm.buffer + dasm.index);
 

@@ -140,6 +140,7 @@ typedef struct Instruction {
     // memory operand general form: ptr [base + index*scale + disp]
     u8 scale; // 0, 1, 2, 4, 8
     RegisterIndex reg, mem, index; // mem is either ModRM.r/m or SIB.base field
+    u8 is_using_rip_relative_addressing;
     Value displacement;
     Value immediate;
 } Instruction;
@@ -176,8 +177,12 @@ void print_inst_memoperand(Instruction inst, StringBuilder* sb) {
 
     sb_append_format(sb, "%s ptr [", ptr[inst.operand_bytesize]);
 
-    // TODO: this must be put under some kind of condition (when using displacement only or rip relative addressing)
-    sb_append_format(sb, "%s", get_register_name(inst.mem, inst.address_bytesize));
+    char* base_register = "rip";
+    if (inst.is_using_rip_relative_addressing);
+    else {
+        base_register = get_register_name(inst.mem, inst.address_bytesize);
+    }
+    sb_append_format(sb, "%s", base_register);
 
     if (inst.scale) {
         sb_append_format(sb, " + %s*%d", get_register_name(inst.index, inst.address_bytesize), (int)inst.scale);
@@ -295,7 +300,13 @@ void modrm_sib_disp(Disassembler* dasm, Instruction* inst) {
         case 0b00: { // no displacement
             if (RM == 0b101) {
                 // special case: four byte signed displacement only (or RIP relative addressing in 64bit mode)
-                not_immplemented("displacement only (or RIP relative addressing)");
+                // not_immplemented("displacement only (or RIP relative addressing)");
+
+                inst->displacement.uint64 = get_bytes(dasm, 4);
+                inst->displacement.int64 = (i64)inst->displacement.int32; // TODO: i think this sign extends our value to 64 bits
+
+                inst->is_using_rip_relative_addressing = 1;
+
                 return;
             }
         } break;
@@ -380,7 +391,7 @@ static Instruction disassemb(Disassembler* dasm) {
     /*40*/    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",    "rex",
     /*50*/   "push",   "push",   "push",   "push",   "push",   "push",   "push",   "push",    "pop",    "pop",    "pop",    "pop",    "pop",    "pop",    "pop",    "pop",
     /*60*/     null,     null,     null, "movsxd", "prefix", "prefix", "prefix", "prefix",   "push",   "imul",   "push",   "imul",     null,     null,     null,     null,
-    /*70*/ "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb", "Jcc_Jb",
+    /*70*/    "Jcc",    "Jcc",    "Jcc",    "Jcc",    "Jcc",    "Jcc",    "Jcc",    "Jcc",    "Jcc",    "Jcc",    "Jcc",    "Jcc",     "Jcc",   "Jcc",    "Jcc",    "Jcc",
     /*80*/     null,     null,     null,     null,   "test",   "test",   "xchg",   "xchg",    "mov",    "mov",    "mov",    "mov",    "mov",    "lea",    "mov",     null,
     /*90*/   "xchg",   "xchg",   "xchg",   "xchg",   "xchg",   "xchg",   "xchg",   "xchg",     null,     null,     null,     null,     null,     null,   "shaf",   "lahf",
     /*A0*/    "mov",    "mov",    "mov",    "mov",     null,     null,     null,     null,   "test",   "test",     null,     null,     null,     null,     null,     null,
@@ -432,6 +443,7 @@ static Instruction disassemb(Disassembler* dasm) {
     #define Ib     { inst.encoding = IE_Imm;    inst.operand_bytesize = 1; imm_bytes = 1; }
     #define Jb     { inst.encoding = IE_Imm;    inst.operand_bytesize = 1; imm_bytes = 1; }
     #define Jz     { inst.encoding = IE_Imm;    imm_bytes = inst.operand_bytesize == 8 ? 4 : inst.operand_bytesize;}
+    #define Gv_M   { inst.encoding = IE_RegMem; }
 
     #define EbIb { inst.encoding = IE_MemImm; inst.operand_bytesize = 1; imm_bytes = 1; }
     #define EvIz { inst.encoding = IE_MemImm; imm_bytes = inst.operand_bytesize == 8 ? 4 : inst.operand_bytesize; }
@@ -458,6 +470,7 @@ static Instruction disassemb(Disassembler* dasm) {
             I       = Immediate value
             rAX     = either AX, EAX or RAX depending on operand-size
             S       = the ModRM.reg field selects a segment register
+            M       = The ModR/M byte may refer only to memory
 
             b       = a byte
             w       = a word
@@ -478,14 +491,14 @@ static Instruction disassemb(Disassembler* dasm) {
         row(0x40,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         )
         row(0x50,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         )
         row(0x60,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         )
-        row(0x70,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         )
-        row(0x80,     EbIb,     EvIz,     EbIb,     EvIb,         ,         ,     EbGb,     EvGv,     EbGb,     EvGv,     GbEb,     GvEv,         ,         ,         ,         )
+        row(0x70,       Jb,       Jb,       Jb,       Jb,       Jb,       Jb,       Jb,       Jb,       Jb,       Jb,       Jb,       Jb,       Jb,       Jb,       Jb,       Jb)
+        row(0x80,     EbIb,     EvIz,     EbIb,     EvIb,       Jb,         ,     EbGb,     EvGv,     EbGb,     EvGv,     GbEb,     GvEv,         ,     Gv_M,         ,         )
         row(0x90,  col_rAX,  col_rAX,  col_rAX,  col_rAX,  col_rAX,  col_rAX,  col_rAX,  col_rAX,         ,         ,         ,         ,         ,         ,         ,         )
         row(0xA0,         ,         ,         ,         ,         ,         ,         ,         ,    AL_Ib,   rAX_Iz,         ,         ,         ,         ,         ,         )
         row(0xB0,   col_Ib,   col_Ib,   col_Ib,   col_Ib,   col_Ib,   col_Ib,   col_Ib,   col_Ib,   col_Iv,   col_Iv,   col_Iv,   col_Iv,   col_Iv,   col_Iv,   col_Iv,   col_Iv)
         row(0xC0,         ,         ,         ,         ,         ,         ,     EbIb,     EvIz,         ,         ,         ,         ,         ,       Ib,         ,         )
         row(0xD0,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         )
-        row(0xE0,         ,         ,         ,         ,         ,         ,         ,         ,         ,       Jz,         ,       Jb,         ,         ,         ,         )
+        row(0xE0,         ,         ,         ,         ,         ,         ,         ,         ,       Jz,       Jz,         ,       Jb,         ,         ,         ,         )
         row(0xF0,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         ,         )
     }
 
